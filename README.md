@@ -25,6 +25,8 @@ swift run -c release kaoz agent.js --provider anthropic --model claude-fable-5 \
     --input '{"question":"what day is it?"}'
 ```
 
+![kaoz CLI running a JavaScript agent](demo/kaoz-demo.gif)
+
 ## One package, layered products
 
 KaozKit is a single SwiftPM package that vends products in layers. A project embedding
