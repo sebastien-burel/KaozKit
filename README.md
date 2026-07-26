@@ -21,7 +21,7 @@ export async function run(input) {
 
 ```sh
 export ANTHROPIC_API_KEY=…
-swift run -c release kaoz agent.js --provider anthropic --model claude-fable-5 \
+swift run -c release kaoz agent.js --provider anthropic --model claude-opus-4-8 \
     --input '{"question":"what day is it?"}'
 ```
 
@@ -93,7 +93,7 @@ Two entry points in `KaozKit`:
 import KaozKit
 
 let runtime = AgentRuntime(
-    makeProvider: { AnthropicProvider(apiKey: key, model: "claude-fable-5") },
+    makeProvider: { AnthropicProvider(apiKey: key, model: "claude-opus-4-8") },
     tools: ToolRegistry(tools: [SaveMemoryTool(store: memory), /* … */]),
     memory: memory,                    // any MemoryStoring (e.g. SemanticMemoryStore)
     persona: "You are Kaoz, terse and precise.")
