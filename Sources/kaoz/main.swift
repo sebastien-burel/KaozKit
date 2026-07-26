@@ -303,8 +303,14 @@ let runtime = AgentRuntime(
     persona: persona,
     log: { FileHandle.standardError.write(Data("[log] \($0)\n".utf8)) })
 
-let input: Any? = inputJSON.flatMap {
-    try? JSONSerialization.jsonObject(with: Data($0.utf8), options: [.fragmentsAllowed])
+// Malformed --input must fail here: silently passing null would surface much
+// later as a confusing "cannot coerce null to object" inside the agent.
+let input: Any? = inputJSON.map {
+    guard let parsed = try? JSONSerialization.jsonObject(
+        with: Data($0.utf8), options: [.fragmentsAllowed]) else {
+        die("error: --input is not valid JSON: \($0)")
+    }
+    return parsed
 }
 
 // Module roots (Moddable-style): the agent's own directory is the default
