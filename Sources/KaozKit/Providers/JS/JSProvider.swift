@@ -95,7 +95,12 @@ public final class JSProvider: LLMProvider, @unchecked Sendable {
             ]
             let json = AgentJSON.string(request)
             do {
-                _ = try engine.eval("__runProviderChat(\(AgentJSON.jsLiteral(json)))")
+                // The request rides in as the native global `__xsbInput`, not
+                // spliced into source: a conversation carrying a large tool
+                // result (e.g. a 94 KB wiki page) would otherwise overflow the
+                // XS lexer's parser buffer. __runProviderChat JSON.parses it
+                // synchronously at its top, before this eval returns.
+                _ = try engine.eval("__runProviderChat(__xsbInput)", input: json)
             } catch let error as XSError {
                 finishOnce(throwing: error)
             } catch {
