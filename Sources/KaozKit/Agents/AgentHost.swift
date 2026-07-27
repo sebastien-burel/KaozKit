@@ -234,9 +234,13 @@ public nonisolated final class AgentHost: @unchecked Sendable {
             // Kicks off the handler on the XS thread; the promise settles later
             // via host.__deliverResult → onDeliverResult → this continuation.
             do {
+                // The payload rides in as the native global `__xsbInput` (not
+                // spliced into source), so a document-sized message can't
+                // overflow the XS lexer's parser buffer. __deliver JSON.parses
+                // it synchronously at its top, before this eval returns.
                 _ = try engine.eval(
-                    "__deliver(\(AgentJSON.jsLiteral(kind)), \(id), "
-                    + "\(AgentJSON.jsLiteral(inputJSON)))")
+                    "__deliver(\(AgentJSON.jsLiteral(kind)), \(id), __xsbInput)",
+                    input: inputJSON)
             } catch {
                 take(id)?.resume(throwing: error)
             }

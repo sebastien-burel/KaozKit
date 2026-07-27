@@ -939,3 +939,44 @@ int xsBridgeEval(void* machine, const char* src, char** out_json, char** out_err
 
     return ok;
 }
+
+/* Like xsBridgeEval, but the payload rides in as the native global `__xsbInput`
+ * rather than embedded in `src`. A document-sized value embedded as a source
+ * string literal overflows the lexer's fixed parser buffer (one token must fit
+ * it); a native xsString has no such cap. `src` is a short call that reads
+ * `__xsbInput` synchronously (the orchestrator's __deliver/__runAgent JSON.parse
+ * it at their top), so we clear the global right after eval — it never pins the
+ * payload past the call. */
+int xsBridgeEvalWithInput(void* machine, const char* src, const char* inputJSON,
+                          char** out_json, char** out_err)
+{
+    int ok = 0;
+    *out_json = NULL;
+    *out_err = NULL;
+
+    xsBeginHost((xsMachine*)machine);
+    {
+        xsVars(1);
+        xsTry {
+            xsSet(xsGlobal, xsID("__xsbInput"), xsString(inputJSON ? inputJSON : "null"));
+            xsResult = xsCall1(xsGlobal, xsID("eval"), xsString(src));
+            xsSet(xsGlobal, xsID("__xsbInput"), xsUndefined);
+            xsVar(0) = xsGet(xsGlobal, xsID("JSON"));
+            xsResult = xsCall1(xsVar(0), xsID("stringify"), xsResult);
+            if (xsTypeOf(xsResult) == xsUndefinedType)
+                *out_json = strdup("undefined");
+            else
+                *out_json = strdup(xsToString(xsResult));
+            ok = 1;
+        }
+        xsCatch {
+            *out_err = strdup(xsToString(xsException));
+            xsSet(xsGlobal, xsID("__xsbInput"), xsUndefined);
+            ok = 0;
+        }
+        xsBridgeDrainPromises(the);
+    }
+    xsEndHost((xsMachine*)machine);
+
+    return ok;
+}

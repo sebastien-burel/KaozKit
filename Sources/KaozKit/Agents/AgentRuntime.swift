@@ -231,10 +231,13 @@ private nonisolated final class AgentSession {
         do {
             // The agent runs in module goal (dynamic import in __runAgent), so it
             // can use static `import ... from`.
+            // The input rides in as the native global `__xsbInput` (not spliced
+            // into source), so a document-sized payload can't overflow the XS
+            // lexer's parser buffer. __runAgent JSON.parses it at its top.
             let inputJSON = AgentJSON.string(input ?? NSNull())
             _ = try engine.eval(
-                "__runAgent(\(AgentJSON.jsLiteral(entry)), "
-                + "\(AgentJSON.jsLiteral(inputJSON)))")
+                "__runAgent(\(AgentJSON.jsLiteral(entry)), __xsbInput)",
+                input: inputJSON)
         } catch let error as XSError {
             complete(.failure(AgentError.evaluation(error.message)))
         } catch {

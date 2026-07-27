@@ -89,13 +89,7 @@ public struct XSCreation {
   public var incrementalKeyCount: Int32 = 1024
   public var nameModulo: Int32 = 1993
   public var symbolModulo: Int32 = 127
-  /// Max size of a single lexed token (identifier or string literal). Hosts
-  /// deliver a call's payload by evaluating source that embeds the JSON as one
-  /// string literal (see AgentHost.deliver / AgentRuntime.__runAgent), so this
-  /// caps the largest payload an agent can receive in a turn. 64 KB overflowed
-  /// on document-sized inputs (e.g. a 94 KB wiki page), raising the XS lexer's
-  /// "buffer overflow"; 4 MB leaves comfortable headroom.
-  public var parserBufferSize: Int32 = 4 * 1024 * 1024
+  public var parserBufferSize: Int32 = 64 * 1024
   public var parserTableModulo: Int32 = 1993
 
   public init() {}
@@ -186,6 +180,33 @@ public final class XSEngine {
       }
       if ok != 0 {
         return .success(String(cString: outJSON!))
+      }
+      return .failure(XSError(message: outErr.map { String(cString: $0) } ?? "unknown error"))
+    }
+    return try result.get()
+  }
+
+  /// Evaluate `src`, delivering `input` to the script as the native global
+  /// `__xsbInput` rather than embedding it in `src`. Use when the payload can be
+  /// large (a document, a conversation): a value spliced into source as a string
+  /// literal must fit the lexer's parser buffer, whereas a native string need
+  /// not. `src` is a short call that reads `__xsbInput`.
+  @discardableResult
+  public func eval(_ src: String, input: String) throws -> String {
+    let result: Result<String, XSError> = loop.sync {
+      var outJSON: UnsafeMutablePointer<CChar>?
+      var outErr: UnsafeMutablePointer<CChar>?
+      let ok = src.withCString { s in
+        input.withCString { i in
+          xsBridgeEvalWithInput(self.machine, s, i, &outJSON, &outErr)
+        }
+      }
+      defer {
+        if let p = outJSON { xsBridgeFree(p) }
+        if let p = outErr { xsBridgeFree(p) }
+      }
+      if ok != 0 {
+        return .success(outJSON.map { String(cString: $0) } ?? "undefined")
       }
       return .failure(XSError(message: outErr.map { String(cString: $0) } ?? "unknown error"))
     }

@@ -54,6 +54,15 @@ void* xsBridgeGetContext(void* bridge);
  * xsBridgeFree. A JS exception is captured here and never crosses into Swift. */
 int xsBridgeEval(void* machine, const char* src, char** out_json, char** out_err);
 
+/* Like xsBridgeEval, but hands `inputJSON` to the script as the native global
+ * `__xsbInput` instead of embedding it in `src`. Embedding a document-sized
+ * value as a source string literal overflows the lexer's parser buffer (a
+ * single token must fit it); a native string has no such cap. `src` is a short
+ * call that reads `__xsbInput` (e.g. `__deliver("m", 1, __xsbInput)`). Same
+ * return contract as xsBridgeEval. */
+int xsBridgeEvalWithInput(void* machine, const char* src, const char* inputJSON,
+                          char** out_json, char** out_err);
+
 /* Free a string returned by this API. */
 void xsBridgeFree(char* s);
 
