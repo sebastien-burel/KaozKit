@@ -81,9 +81,6 @@ public actor MLXChatActor {
                     let userInput = isHarmony
                         ? UserInput(messages: Self.mapMessagesHarmony(messages), tools: mappedTools)
                         : UserInput(chat: Self.mapMessages(messages), tools: mappedTools)
-                    NSLog("[MLX-DIAG] model=%@ isHarmony=%d specsIn=%d mappedTools=%d messages=%@",
-                          modelID, isHarmony ? 1 : 0, tools.count, mappedTools?.count ?? 0,
-                          messages.map { "\($0.role.rawValue):\($0.content.prefix(40))" }.description)
                     let lmInput = try await container.prepare(input: userInput)
                     let params = GenerateParameters(
                         maxTokens: 4096,
