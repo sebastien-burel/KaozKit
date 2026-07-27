@@ -89,7 +89,13 @@ public struct XSCreation {
   public var incrementalKeyCount: Int32 = 1024
   public var nameModulo: Int32 = 1993
   public var symbolModulo: Int32 = 127
-  public var parserBufferSize: Int32 = 64 * 1024
+  /// Max size of a single lexed token (identifier or string literal). Hosts
+  /// deliver a call's payload by evaluating source that embeds the JSON as one
+  /// string literal (see AgentHost.deliver / AgentRuntime.__runAgent), so this
+  /// caps the largest payload an agent can receive in a turn. 64 KB overflowed
+  /// on document-sized inputs (e.g. a 94 KB wiki page), raising the XS lexer's
+  /// "buffer overflow"; 4 MB leaves comfortable headroom.
+  public var parserBufferSize: Int32 = 4 * 1024 * 1024
   public var parserTableModulo: Int32 = 1993
 
   public init() {}
