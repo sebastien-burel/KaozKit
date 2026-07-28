@@ -470,17 +470,27 @@ final class ShutdownFlag: @unchecked Sendable {
         // alive so its scheduled ticks (host.schedule/every) fire and the webhook
         // server keeps serving. Reads more stdin messages in the background.
         if let input { await deliverMessage(input) }
-        let stdinReader = Task {
+        // readLine() blocks, so it needs its own thread. A `Task {}` here would
+        // inherit this scope's @MainActor and pin the main thread between two
+        // typed lines — and every async host call settles from
+        // `Task { @MainActor }` (TyKaozHost), so a tick firing while the
+        // terminal waits for input could never complete. Its host call would
+        // stay in flight forever, blocking the snapshot with it.
+        let stdinThread = Thread {
             while let line = readLine(strippingNewline: true) {
                 if let payload = parseLine(line) { await deliverMessage(payload) }
             }
         }
-        _ = stdinReader
+        stdinThread.stackSize = 1 << 20
+        stdinThread.start()
         retainedWebhook = webhookServer   // keep the listener alive past this scope
         FileHandle.standardError.write(Data("[daemon] running — Ctrl-C to stop\n".utf8))
         // Park without blocking a thread (timers + the webhook run on their own
-        // queues, deliveries on the concurrency pool). Runs until killed.
-        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+        // queues, deliveries on the concurrency pool). Runs until killed — the
+        // signal handler above exits the process. A never-resumed continuation
+        // parks just as well, but the checked runtime reports it as a leak on
+        // stderr the moment we suspend.
+        while true { try? await Task.sleep(for: .seconds(3600)) }
     }
 
     while let line = readLine(strippingNewline: true) {
