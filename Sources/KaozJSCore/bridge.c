@@ -571,7 +571,7 @@ int xsBridgeModuleStatus(void* machine, char** out_err)
  * Machine lifecycle.
  * ------------------------------------------------------------------------- */
 
-void* xsBridgeCreateMachine(const XSBridgeCreation* c)
+void* xsBridgeCreateMachine(const XSBridgeCreation* c, const char* name)
 {
   xsCreation creation = {
     c->initialChunkSize,
@@ -589,7 +589,8 @@ void* xsBridgeCreateMachine(const XSBridgeCreation* c)
   };
 
   XSBridge* bridge = (XSBridge*)calloc(1, sizeof(XSBridge));
-  xsMachine* machine = xsCreateMachine(&creation, "XSBridge", bridge);
+  xsMachine* machine = xsCreateMachine(
+    &creation, (name && name[0]) ? name : "XSBridge", bridge);
   if (!machine) {
     free(bridge);
     return NULL;
@@ -775,7 +776,7 @@ static int xsBridgeReadU32(XSBridgeReadBuf* r, uint32_t* v)
   return xsBridgeBufRead(r, v, sizeof(*v));
 }
 
-void* xsBridgeReadSnapshot(const char* bytes, size_t len)
+void* xsBridgeReadSnapshot(const char* bytes, size_t len, const char* name)
 {
   if (gHostCount <= 0)
     return NULL;
@@ -820,7 +821,8 @@ void* xsBridgeReadSnapshot(const char* bytes, size_t len)
   snap.read = xsBridgeBufRead;
 
   XSBridge* bridge = (XSBridge*)calloc(1, sizeof(XSBridge));
-  xsMachine* machine = fxReadSnapshot(&snap, "XSBridge", bridge);
+  xsMachine* machine = fxReadSnapshot(
+    &snap, (name && name[0]) ? name : "XSBridge", bridge);
   free(callbacks);
   if (!machine || snap.error) {
     fprintf(stderr, "snapshot: read failed (%d)\n", snap.error);

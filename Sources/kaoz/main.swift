@@ -359,7 +359,7 @@ final class ShutdownFlag: @unchecked Sendable {
     }
     let agentOpt: AgentHost? = restored.map { data in
         AgentHost(
-            snapshot: data, roots: moduleRoots,
+            snapshot: data, roots: moduleRoots, name: entryModule,
             makeProvider: makeProvider, resolveProvider: resolveProvider,
             providerCatalog: providerCatalog, tools: registry, memory: memory,
             tokenBudget: tokenBudget, persona: persona, log: logSink)

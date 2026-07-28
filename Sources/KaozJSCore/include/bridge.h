@@ -32,9 +32,10 @@ typedef struct {
 } XSBridgeCreation;
 
 /* Create a full XS machine (engine with parser) sized by `creation`, plus its
- * async bridge and a CFRunLoopSource on the *current* run loop. Returns an
+ * async bridge and a CFRunLoopSource on the *current* run loop. `name` is the
+ * machine name xsbug displays — NULL or "" falls back to "XSBridge". Returns an
  * opaque handle or NULL. */
-void* xsBridgeCreateMachine(const XSBridgeCreation* creation);
+void* xsBridgeCreateMachine(const XSBridgeCreation* creation, const char* name);
 
 /* Destroy a machine and its bridge. Caller must ensure no async work is still
  * in flight (no pending ids) before deleting. */
@@ -162,7 +163,7 @@ int xsBridgeWriteSnapshot(void* machine, char** out, size_t* outLen);
  * Rejects if the XS version/architecture differ or the registered host table is
  * not a prefix-compatible superset of the snapshot's. Returns an opaque handle
  * or NULL. Must run on the target run-loop thread. */
-void* xsBridgeReadSnapshot(const char* bytes, size_t len);
+void* xsBridgeReadSnapshot(const char* bytes, size_t len, const char* name);
 
 /* The XS-typed helpers for consumer C host-function targets (xsServicePromise)
  * live in bridgeXS.h, which is NOT part of the clang module — include it

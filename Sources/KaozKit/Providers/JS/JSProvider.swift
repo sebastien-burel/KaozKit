@@ -28,7 +28,7 @@ public final class JSProvider: LLMProvider, @unchecked Sendable {
     ///   default export) and pulls in the XMLHttpRequest shim itself.
     public init?(id: String, displayName: String, providerModule: String, config: [String: Any]) {
         _ = JSResource.registerTrustedPrefix   // bundle JS trusted for absolute import
-        guard let engine = XSEngine(),
+        guard let engine = XSEngine(name: "provider:" + id),
               let providerPath = JSResource.path(providerModule),
               let orchestratorPath = JSResource.path("provider-orchestrator")
         else { return nil }

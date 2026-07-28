@@ -35,13 +35,16 @@ public enum TyKaozThreads {
         xsBridgeRegisterThreadFactory(create, destroy)
     }
 
-    private static let create: @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? = { _ in
+    private static let create: @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? = { cName in
         lock.lock()
         let make = makeHost
         lock.unlock()
         guard let make else { return nil }
         let host = make()
-        guard let child = XSEngine.tyKaoz(host: host) else { return nil }
+        // `new Thread(name)` in JS names the child machine: that name reaches
+        // here from service.c and becomes what xsbug shows for this engine.
+        let name = cName.map { String(cString: $0) }.flatMap { $0.isEmpty ? nil : $0 }
+        guard let child = XSEngine.tyKaoz(host: host, name: name ?? "thread") else { return nil }
         child.installThreads()
         let machine = child.withMachine { $0 }
         lock.lock()

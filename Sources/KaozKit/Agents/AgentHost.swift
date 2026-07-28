@@ -71,7 +71,7 @@ public nonisolated final class AgentHost: @unchecked Sendable {
             providerCatalog: providerCatalog, tools: tools, memory: memory,
             tokenBudget: tokenBudget, persona: persona, log: log)
         self.host = host
-        guard let engine = XSEngine.tyKaoz(host: host) else { return nil }
+        guard let engine = XSEngine.tyKaoz(host: host, name: entryModule) else { return nil }
         self.engine = engine
         if installThreads { engine.installThreads() }
         engine.withMachine { _ in
@@ -91,6 +91,7 @@ public nonisolated final class AgentHost: @unchecked Sendable {
     public init?(
         snapshot: Data,
         roots: [(prefix: String, dir: String)],
+        name: String = "resident",
         makeProvider: @escaping @Sendable () -> (any LLMProvider)?,
         resolveProvider: (@Sendable (String, [String: Any]) -> (any LLMProvider)?)? = nil,
         providerCatalog: [ProviderDescriptor] = [],
@@ -106,7 +107,7 @@ public nonisolated final class AgentHost: @unchecked Sendable {
             tokenBudget: tokenBudget, persona: persona, log: log)
         self.host = host
         xsBridgeTyKaozRegister()   // host table must be registered before reading a snapshot
-        guard let engine = XSEngine(snapshot: snapshot) else { return nil }
+        guard let engine = XSEngine(snapshot: snapshot, name: name) else { return nil }
         self.engine = engine
         // Point the restored machine's context at THIS host and re-register roots.
         let hostPtr = Unmanaged.passUnretained(host).toOpaque()

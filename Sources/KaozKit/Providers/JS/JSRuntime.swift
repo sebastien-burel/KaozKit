@@ -9,7 +9,7 @@ import KaozHostC
 /// `globalThis.__result`.
 public enum JSHttpProbe {
     public static func run(script: String, timeout: TimeInterval = 15) -> String? {
-        guard let engine = XSEngine() else { return nil }
+        guard let engine = XSEngine(name: "http-probe") else { return nil }
         engine.withMachine { xsBridgeHttpInstall($0) }
         if let shimImport = JSResource.importStatement("xmlhttprequest") {
             _ = try? engine.eval(shimImport)   // resolves within eval's drain

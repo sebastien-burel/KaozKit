@@ -99,7 +99,9 @@ public final class XSEngine {
   private let loop = RunLoopThread()
   private let machine: UnsafeMutableRawPointer
 
-  public init?(creation: XSCreation = XSCreation()) {
+  /// - Parameter name: the machine name xsbug shows. Default `"XSBridge"`; give
+  ///   each engine its own so a multi-machine run is readable in the debugger.
+  public init?(creation: XSCreation = XSCreation(), name: String = "XSBridge") {
     // The machine (and its CFRunLoopSource) must be created ON the dedicated
     // thread, so the source is attached to that thread's run loop.
     let made: UnsafeMutableRawPointer? = loop.sync {
@@ -115,7 +117,7 @@ public final class XSEngine {
         symbolModulo: creation.symbolModulo,
         parserBufferSize: creation.parserBufferSize,
         parserTableModulo: creation.parserTableModulo)
-      return xsBridgeCreateMachine(&c)
+      return name.withCString { xsBridgeCreateMachine(&c, $0) }
     }
     guard let the = made else { return nil }
     self.machine = the
@@ -127,10 +129,12 @@ public final class XSEngine {
   /// Restore an engine from snapshot bytes produced by `writeSnapshot()`. The
   /// host table must already be registered (the consumer's C install/register
   /// path) and be prefix-compatible with the snapshot's, else this returns nil.
-  public init?(snapshot: Data) {
+  public init?(snapshot: Data, name: String = "XSBridge") {
     let made: UnsafeMutableRawPointer? = loop.sync {
       snapshot.withUnsafeBytes { raw in
-        xsBridgeReadSnapshot(raw.bindMemory(to: CChar.self).baseAddress, raw.count)
+        name.withCString {
+          xsBridgeReadSnapshot(raw.bindMemory(to: CChar.self).baseAddress, raw.count, $0)
+        }
       }
     }
     guard let the = made else { return nil }

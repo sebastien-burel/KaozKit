@@ -214,7 +214,9 @@ private nonisolated final class AgentSession {
         host.onReport = { [weak self] result in self?.complete(.success(result)) }
         host.onFail = { [weak self] err in self?.complete(.failure(AgentError.script(err))) }
 
-        guard let engine = XSEngine.tyKaoz(host: host) else {
+        // Name the machine after the agent module, so xsbug distinguishes it
+        // from the sub-agents it spawns and the framework's own engines.
+        guard let engine = XSEngine.tyKaoz(host: host, name: entry) else {
             complete(.failure(AgentError.engineCreationFailed))
             return
         }

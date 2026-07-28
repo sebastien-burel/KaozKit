@@ -318,9 +318,9 @@ extension XSEngine {
     /// Create an engine with TyKaoz's host functions installed, the bridge
     /// context pointed at `host`, and the JS orchestrator (`host.llm.chat`,
     /// `__runAgent`, `__callTool`) installed. All XS access on the XS thread.
-    public static func tyKaoz(host: TyKaozHost) -> XSEngine? {
+    public static func tyKaoz(host: TyKaozHost, name: String = "XSBridge") -> XSEngine? {
         _ = JSResource.registerTrustedPrefix   // bundle JS trusted for absolute import
-        guard let engine = XSEngine() else { return nil }
+        guard let engine = XSEngine(name: name) else { return nil }
         let hostPtr = Unmanaged.passUnretained(host).toOpaque()
         engine.withMachine { machine in
             xsBridgeTyKaozInstall(machine)

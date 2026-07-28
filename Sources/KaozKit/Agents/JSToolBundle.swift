@@ -38,7 +38,7 @@ public nonisolated final class JSToolBundle: @unchecked Sendable {
     ) {
         let host = TyKaozHost(
             makeProvider: makeProvider, tools: tools, memory: memory, log: log)
-        guard let engine = XSEngine.tyKaoz(host: host) else { return nil }
+        guard let engine = XSEngine.tyKaoz(host: host, name: "js-tools") else { return nil }
         self.host = host
         self.engine = engine
         if installHTTP {
