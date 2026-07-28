@@ -59,8 +59,13 @@ let package = Package(
         .executable(name: "kaoz", targets: ["kaoz"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.31.4"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "3.31.3"),
+        // Pinned exactly, not `from:`. mlx-swift-lm 3.31.4 implements Gemma 4
+        // KV-cache sharing (no k_proj/v_proj past `num_kv_shared_layers`), which
+        // rejects checkpoints quantized before that change. Keep these in step
+        // with the TyKaoz app: `link-mlx-metallib.sh` copies its Cmlx metallib,
+        // so a version drift here also mismatches the Metal kernels.
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.4"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "3.31.3"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
     ],
