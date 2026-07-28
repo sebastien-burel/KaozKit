@@ -333,6 +333,21 @@ moduleRoots.append(contentsOf: namedModuleRoots)
 var retainedWebhook: WebhookServer?
 
 if resident {
+/// One-shot latch guarding the daemon's shutdown: signal handlers run on a
+/// concurrent queue, so a second Ctrl-C must be told apart from the first.
+final class ShutdownFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started = false
+    /// True only for the first caller.
+    func begin() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if started { return false }
+        started = true
+        return true
+    }
+}
+
     // A resident agent: one engine, many deliveries. Read a JSON message per
     // stdin line, deliver it, print the handler's JSON result. State persists.
     let logSink: @Sendable (String) -> Void = {
@@ -363,6 +378,57 @@ if resident {
     setvbuf(stdout, nil, _IOLBF, 0)
 
     // Inbound channel: an HTTP server that delivers each request body to the
+    // Persist the JS heap (state) for the next process, if requested.
+    let snapshotPath = statePath
+    let persistState: @Sendable () -> Void = {
+        guard let snapshotPath else { return }
+        // A snapshot needs an idle machine: in-flight host calls (an LLM turn, a
+        // tool) are parked in Swift, off the heap, so writing now would fail and
+        // lose everything. Let them settle — Ctrl-C mid-answer is the common case.
+        if agent.pendingCount > 0 {
+            FileHandle.standardError.write(Data(
+                "[daemon] settling in-flight work before snapshot — Ctrl-C again to abandon\n".utf8))
+            let deadline = Date().addingTimeInterval(timeout)
+            while agent.pendingCount > 0, Date() < deadline { usleep(20_000) }
+        }
+        do {
+            try agent.writeSnapshot().write(to: URL(fileURLWithPath: snapshotPath))
+        } catch {
+            FileHandle.standardError.write(
+                Data("snapshot failed: \(error.localizedDescription)\n".utf8))
+        }
+    }
+
+    // A daemon ends by signal, not by EOF: catch SIGINT/SIGTERM so the snapshot
+    // is written before we go away — the default handler kills the process
+    // before any of the code below can run.
+    var signalSources: [any DispatchSourceSignal] = []
+    if snapshotPath != nil {
+        let shutdown = ShutdownFlag()
+        for sig in [SIGINT, SIGTERM] {
+            signal(sig, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+            source.setEventHandler {
+                guard shutdown.begin() else {
+                    // Second signal: the work we were waiting on may never settle.
+                    FileHandle.standardError.write(
+                        Data("[daemon] abandoned — no snapshot written\n".utf8))
+                    exit(1)
+                }
+                // Settle-and-write off the handler: a source serializes its
+                // events, so blocking here would swallow the second Ctrl-C.
+                DispatchQueue.global().async {
+                    persistState()
+                    agent.close()
+                    exit(0)
+                }
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+    _ = signalSources   // keep the sources alive for the process's lifetime
+
     // agent and replies with its result. Keeps the process alive (implies daemon).
     var webhookServer: WebhookServer?
     if let webhookPort {
@@ -420,15 +486,7 @@ if resident {
     while let line = readLine(strippingNewline: true) {
         if let payload = parseLine(line) { await deliverMessage(payload) }
     }
-    // Persist the JS heap (state) for the next process, if requested.
-    if let statePath {
-        do {
-            try agent.writeSnapshot().write(to: URL(fileURLWithPath: statePath))
-        } catch {
-            FileHandle.standardError.write(
-                Data("snapshot failed: \(error.localizedDescription)\n".utf8))
-        }
-    }
+    persistState()
     agent.close()
     exit(0)
 }
