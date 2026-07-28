@@ -116,8 +116,14 @@ public nonisolated final class AgentRuntime {
             providerCatalog: providerCatalog, tools: tools, memory: memory,
             tokenBudget: tokenBudget, persona: persona, log: log)
         return try await withCheckedThrowingContinuation { continuation in
+            // The default ("") root is the agent's own directory: expose it as
+            // __moduleBase so a relative `new Service(t, "./sub.mjs")` resolves,
+            // and so an agent can address files next to itself.
             let session = AgentSession(
-                host: host, entry: entryModule, roots: roots, continuation: continuation)
+                host: host, entry: entryModule, roots: roots,
+                moduleBase: roots.first { $0.prefix == "" }
+                    .map { URL(fileURLWithPath: $0.dir, isDirectory: true) },
+                continuation: continuation)
             session.start(input: input, timeout: timeout)
         }
     }
