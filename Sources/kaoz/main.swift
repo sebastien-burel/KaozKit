@@ -178,7 +178,8 @@ let resolveProvider: @Sendable (String, [String: Any]) -> (any LLMProvider)? = {
         return JSProviders.ollama(
             model: model, baseURL: base("OLLAMA_BASE_URL") ?? "http://localhost:11434")
     case "js-google":
-        guard let key = env["GOOGLE_API_KEY"], !key.isEmpty, let model, !model.isEmpty else {
+        guard let key = env["GOOGLE_API_KEY"] ?? env["GOOGLEAI_API_KEY"], !key.isEmpty,
+              let model, !model.isEmpty else {
             return nil
         }
         return JSProviders.google(apiKey: key, model: model, baseURL: base("GOOGLE_BASE_URL"))
@@ -332,7 +333,6 @@ moduleRoots.append(contentsOf: namedModuleRoots)
 // resident branch; a top-level var outlives that scope's parked await).
 var retainedWebhook: WebhookServer?
 
-if resident {
 /// One-shot latch guarding the daemon's shutdown: signal handlers run on a
 /// concurrent queue, so a second Ctrl-C must be told apart from the first.
 final class ShutdownFlag: @unchecked Sendable {
@@ -348,6 +348,7 @@ final class ShutdownFlag: @unchecked Sendable {
     }
 }
 
+if resident {
     // A resident agent: one engine, many deliveries. Read a JSON message per
     // stdin line, deliver it, print the handler's JSON result. State persists.
     let logSink: @Sendable (String) -> Void = {
@@ -377,7 +378,6 @@ final class ShutdownFlag: @unchecked Sendable {
     // killed, not exited, so block buffering would swallow its output).
     setvbuf(stdout, nil, _IOLBF, 0)
 
-    // Inbound channel: an HTTP server that delivers each request body to the
     // Persist the JS heap (state) for the next process, if requested.
     let snapshotPath = statePath
     let persistState: @Sendable () -> Void = {
@@ -429,6 +429,7 @@ final class ShutdownFlag: @unchecked Sendable {
     }
     _ = signalSources   // keep the sources alive for the process's lifetime
 
+    // Inbound channel: an HTTP server that delivers each request body to the
     // agent and replies with its result. Keeps the process alive (implies daemon).
     var webhookServer: WebhookServer?
     if let webhookPort {
@@ -478,7 +479,14 @@ final class ShutdownFlag: @unchecked Sendable {
         // stay in flight forever, blocking the snapshot with it.
         let stdinThread = Thread {
             while let line = readLine(strippingNewline: true) {
-                if let payload = parseLine(line) { await deliverMessage(payload) }
+                guard let payload = parseLine(line) else { continue }
+                // One delivery at a time, as the previous sequential loop did.
+                let delivered = DispatchSemaphore(value: 0)
+                Task.detached {
+                    await deliverMessage(payload)
+                    delivered.signal()
+                }
+                delivered.wait()
             }
         }
         stdinThread.stackSize = 1 << 20
