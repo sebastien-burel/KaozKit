@@ -217,6 +217,63 @@ public final class XSEngine {
     return try result.get()
   }
 
+  /// Call a **named export** of the ES module at `path`, passing `params` (JSON)
+  /// as its single argument. Fire-and-return: the export may be async, and its
+  /// outcome is the caller's business (the agent layer settles through its own
+  /// host channel). Reaching a module export means Swift no longer has to name a
+  /// global function to drive JS.
+  ///
+  /// Re-entrant, unlike `runModule`: nothing per-call is stored on the bridge.
+  /// The payload is captured into a closure **synchronously**, before the import
+  /// resolves — `__xsbInput` is cleared as soon as the eval returns, well before
+  /// promise jobs run, so an `import(…).then(m => m.f(__xsbInput))` would read
+  /// `undefined`.
+  ///
+  /// `path` must be a specifier the module loader accepts (an absolute path needs
+  /// its extension; a bare specifier resolves against the registered roots).
+  /// Repeated calls hit the module cache, so module-scope state persists — which
+  /// is what a stateful orchestrator needs.
+  ///
+  /// Throws only on a *synchronous* failure (bad specifier, syntax error, missing
+  /// export). An async rejection surfaces through whatever channel the export
+  /// itself uses.
+  ///
+  /// Injection boundary: **no caller data is spliced into the source**. `params`
+  /// — the only value that can carry agent or user content — travels as a native
+  /// string and is `JSON.parse`d, which is the entire reason `__xsbInput` exists.
+  /// `path` and `name` are framework-supplied (a bundle resource, a literal at the
+  /// call site) and are JS-escaped below rather than trusted blindly.
+  @discardableResult
+  public func callModule(_ path: String, export name: String, params: String) throws -> String {
+    let src = """
+      (function () { \
+      var p = JSON.parse(__xsbInput); \
+      return import(\(Self.jsString(path))).then(function (m) { \
+      var f = m[\(Self.jsString(name))]; \
+      if (typeof f !== 'function') throw new Error('module export not callable: ' + \(Self.jsString(name))); \
+      return f(p); \
+      }); })()
+      """
+    return try eval(src, input: params)
+  }
+
+  /// Minimal JS string literal — `path` and `name` are framework-supplied, but
+  /// a path can legitimately contain a quote or a backslash.
+  private static func jsString(_ s: String) -> String {
+    var out = "\""
+    for c in s.unicodeScalars {
+      switch c {
+      case "\"": out += "\\\""
+      case "\\": out += "\\\\"
+      case "\n": out += "\\n"
+      case "\r": out += "\\r"
+      default:
+        if c.value < 0x20 { out += String(format: "\\u%04x", c.value) } else { out.unicodeScalars.append(c) }
+      }
+    }
+    return out + "\""
+  }
+
   /// Import the ES module file at `path` (absolute, or relative to the cwd;
   /// `./`/`../` between modules resolve against the importer, extensions are
   /// explicit). If the module has a callable `default` export, it is invoked

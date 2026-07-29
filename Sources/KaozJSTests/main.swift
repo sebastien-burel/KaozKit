@@ -549,4 +549,104 @@ do {
     phaseResult(9, before)
 }
 
+// PHASE 10: calling a named module export from Swift (XSEngine.callModule) —
+// the mechanism that lets the bridge drive JS without naming a global function.
+// The load-bearing assertion is RE-ENTRANCY: two calls in flight with different
+// payloads must each see their own, which is why the payload is captured into a
+// closure before the import resolves rather than read off `__xsbInput` later.
+do {
+    let before = failures
+    print("PHASE 10: named module export calls (XSEngine.callModule)")
+    let fm = FileManager.default
+    let dir = fm.temporaryDirectory.appendingPathComponent("xsb-modcall-\(getpid())")
+    try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+    // Module-scope state, so we also prove the module cache keeps it across calls
+    // (a stateful orchestrator depends on that).
+    let source = """
+    globalThis.__seen = [];
+    let calls = 0;
+    export function plain(p) { calls += 1; globalThis.__seen.push(p.tag); return p.tag; }
+    export function counted() { return calls; }
+    export function viaHost(p) {
+        return host.echo(p.tag).then(function (r) { globalThis.__seen.push("host:" + r); });
+    }
+    export function boom() { throw new Error("boom from module"); }
+    export const notAFunction = 42;
+    """
+    let modulePath = dir.appendingPathComponent("svc.mjs").path
+    try? source.write(to: URL(fileURLWithPath: modulePath), atomically: true, encoding: .utf8)
+
+    if let engine = makeEngine() {
+        // Predicates are evaluated in JS: `eval` returns JSON, so substring
+        // matching on a stringified array fights the escaping instead of the
+        // behaviour.
+        func sawTag(_ engine: XSEngine, _ tag: String) -> Bool {
+            ((try? engine.eval("globalThis.__seen.indexOf(\"\(tag)\") >= 0")) ?? "false") == "true"
+        }
+
+        // 1. A plain export receives its parsed payload.
+        _ = try? engine.callModule(modulePath, export: "plain", params: #"{"tag":"one"}"#)
+        engine.runUntilIdle(timeout: 5)
+        check("plain export sees its payload", sawTag(engine, "one"))
+
+        // 2. Two calls in flight with different payloads: neither may see the
+        //    other's. A shared per-machine param slot would fail this.
+        _ = try? engine.callModule(modulePath, export: "plain", params: #"{"tag":"A"}"#)
+        _ = try? engine.callModule(modulePath, export: "plain", params: #"{"tag":"B"}"#)
+        engine.runUntilIdle(timeout: 5)
+        check("overlapping calls keep distinct payloads",
+              sawTag(engine, "A") && sawTag(engine, "B"))
+
+        // 3. Module-scope state survives across calls (module cache hit).
+        _ = try? engine.callModule(modulePath, export: "counted", params: "null")
+        engine.runUntilIdle(timeout: 5)
+        let counted = (try? engine.eval("globalThis.__seen.length")) ?? "0"
+        check("module-scope state persists across calls (3 payloads seen) — \(counted)",
+              counted == "3")
+
+        // 4. An export whose promise is settled by a Swift host call.
+        _ = try? engine.callModule(modulePath, export: "viaHost", params: #"{"tag":"echo-me"}"#)
+        engine.runUntilIdle(timeout: 5)
+        check("export awaiting a host call completes", sawTag(engine, "host:echo-me"))
+
+        // 5. A throwing export must not corrupt the engine: the next call still works.
+        _ = try? engine.callModule(modulePath, export: "boom", params: "null")
+        engine.runUntilIdle(timeout: 5)
+        _ = try? engine.callModule(modulePath, export: "plain", params: #"{"tag":"after-throw"}"#)
+        engine.runUntilIdle(timeout: 5)
+        check("engine survives a throwing export", sawTag(engine, "after-throw"))
+
+        // 6. KNOWN GAP, asserted as-is rather than papered over: a missing or
+        //    non-callable export rejects *asynchronously* (the lookup happens in
+        //    the import's `then`), so `callModule` cannot report it and the caller
+        //    sees silence. Harmless for the agent layer, whose outcomes travel
+        //    through host.__report / __deliverResult, but a framework typo would
+        //    hang until the delivery timeout. Stage 2 closes this when it rederives
+        //    error surfacing; this assertion documents today's behaviour so the fix
+        //    is visible as a change.
+        var threwSynchronously = false
+        do { _ = try engine.callModule(modulePath, export: "notAFunction", params: "null") }
+        catch { threwSynchronously = true }
+        engine.runUntilIdle(timeout: 5)
+        check("non-callable export rejects asynchronously, not synchronously (known gap)",
+              !threwSynchronously)
+        check("engine still usable after a non-callable export",
+              { _ = try? engine.callModule(modulePath, export: "plain", params: #"{"tag":"after-bad-export"}"#)
+                engine.runUntilIdle(timeout: 5)
+                return sawTag(engine, "after-bad-export") }())
+
+        // 7. Invariant 4: every remembered slot forgotten, nothing left in flight.
+        engine.runUntilIdle(timeout: 5)
+        var remembered: UInt32 = 0
+        var forgotten: UInt32 = 0
+        engine.withMachine { xsBridgeDebugCounts($0, &remembered, &forgotten) }
+        check("roots balanced (\(remembered) == \(forgotten))", remembered == forgotten)
+        check("idle (pending == 0)", engine.pendingCount == 0)
+    } else {
+        check("create engine", false)
+    }
+    phaseResult(10, before)
+}
+
 exit(failures == 0 ? 0 : 1)
