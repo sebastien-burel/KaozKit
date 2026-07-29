@@ -21,6 +21,14 @@ public nonisolated final class AgentHost: @unchecked Sendable {
 
     private let engine: XSEngine
     private let host: TyKaozHost
+    /// Absolute path of the bundled orchestrator, or nil when this host drives a
+    /// legacy heap (see `legacyHeap`).
+    private let orchestrator: String?
+    /// A heap restored from a snapshot written before the orchestrator had
+    /// exports. Its module namespace has no `deliver`, so calling one would
+    /// reject asynchronously and the delivery would never settle — those hosts
+    /// keep using the global entry points the restored heap does have.
+    private let legacyHeap: Bool
 
     // Self-scheduling (host.schedule/every/cancel): armed timers deliver ticks.
     private var timers: [UInt32: DispatchSourceTimer] = [:]
@@ -75,10 +83,17 @@ public nonisolated final class AgentHost: @unchecked Sendable {
         self.engine = engine
         if installThreads { engine.installThreads() }
         engine.withMachine { _ in JSResource.registerRoots(roots) }
+        self.orchestrator = JSResource.path("agent-orchestrator")
+        self.legacyHeap = false
         wireDelivery()
-        // Import the agent module once — import() resolves within the eval drain,
-        // so __agent/__agentReady are set (or in flight) by the time this returns.
-        _ = try? engine.eval("__loadAgent(\(AgentJSON.jsLiteral(entryModule)))")
+        // Import the agent module once — the import resolves within the call's
+        // drain, so the orchestrator's agent/agentReady are set (or in flight) by
+        // the time this returns.
+        if let orchestrator {
+            _ = try? engine.callModule(
+                orchestrator, export: "loadAgent",
+                params: AgentJSON.string(["path": entryModule]))
+        }
     }
 
     /// Restore a resident agent from a snapshot written by `writeSnapshot()`.
@@ -112,6 +127,12 @@ public nonisolated final class AgentHost: @unchecked Sendable {
             xsBridgeSetContext(machine, hostPtr)
             JSResource.registerRoots(roots)
         }
+        // The agent is NOT re-imported: the restored heap already holds the
+        // orchestrator and its state. Which generation, though, decides how this
+        // host may drive it — the marker is set by the orchestrator's last line.
+        let generation = (try? engine.eval("globalThis.__kaozOrchestrator ?? 0")) ?? "0"
+        self.legacyHeap = (generation != "2")
+        self.orchestrator = self.legacyHeap ? nil : JSResource.path("agent-orchestrator")
         wireDelivery()
     }
 
@@ -235,9 +256,18 @@ public nonisolated final class AgentHost: @unchecked Sendable {
                 // spliced into source), so a document-sized message can't
                 // overflow the XS lexer's parser buffer. __deliver JSON.parses
                 // it synchronously at its top, before this eval returns.
-                _ = try engine.eval(
-                    "__deliver(\(AgentJSON.jsLiteral(kind)), \(id), __xsbInput)",
-                    input: inputJSON)
+                if let orchestrator {
+                    _ = try engine.callModule(
+                        orchestrator, export: "deliver",
+                        params: AgentJSON.string([
+                            "kind": kind, "deliveryId": Int(id), "input": payload ?? NSNull(),
+                        ]))
+                } else {
+                    // Legacy heap: drive the globals it came back with.
+                    _ = try engine.eval(
+                        "__deliver(\(AgentJSON.jsLiteral(kind)), \(id), __xsbInput)",
+                        input: inputJSON)
+                }
             } catch {
                 take(id)?.resume(throwing: error)
             }

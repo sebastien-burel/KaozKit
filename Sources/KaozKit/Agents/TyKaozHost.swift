@@ -326,21 +326,23 @@ extension XSEngine {
             xsBridgeTyKaozInstall(machine)
             xsBridgeSetContext(machine, hostPtr)
         }
-        // The agent orchestrator ships as a bundled ES module; importing it
-        // (side effect) wires host.llm / __runAgent / __callTool. The dynamic
-        // import resolves within eval's drain.
-        if let orchestratorImport = JSResource.importStatement("agent-orchestrator") {
-            _ = try? engine.eval(orchestratorImport)
+        // Import the orchestrator AND configure the run in one call to its `init`
+        // export — this replaces the side-effect import plus a separate
+        // `globalThis.__providerCatalog = …` eval.
+        guard let orchestrator = JSResource.path("agent-orchestrator") else { return nil }
+        let catalog = host.providerCatalog.map { d -> [String: Any] in
+            var e: [String: Any] = ["id": d.id, "name": d.name]
+            if let model = d.model { e["model"] = model }
+            return e
         }
-        // Publish the provider catalog for host.providers() discovery.
-        if !host.providerCatalog.isEmpty {
-            let catalog = host.providerCatalog.map { d -> [String: Any] in
-                var e: [String: Any] = ["id": d.id, "name": d.name]
-                if let model = d.model { e["model"] = model }
-                return e
-            }
-            _ = try? engine.eval("globalThis.__providerCatalog = \(AgentJSON.string(catalog))")
-        }
+        _ = try? engine.callModule(
+            orchestrator, export: "init",
+            params: AgentJSON.string(["providerCatalog": catalog]))
+        // A missing or broken orchestrator rejects asynchronously, which would
+        // otherwise surface much later as a delivery that never settles. The
+        // module sets this marker as its last act, so its absence here is a loud,
+        // immediate failure instead.
+        guard (try? engine.eval("globalThis.__kaozOrchestrator ?? 0")) == "2" else { return nil }
         return engine
     }
 }

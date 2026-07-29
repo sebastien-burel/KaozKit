@@ -41,15 +41,30 @@ export const memory = {
   search(query, limit) { return native.memory.search(query, limit); },
 };
 
+// --- Runtime configuration --------------------------------------------------
+// Values Swift used to inject with a `globalThis.x = …` eval. They now arrive
+// once, through the orchestrator's `init`, and live in this module's scope.
+
+let providerCatalog = [];
+
+/// Framework-internal: called by agent-orchestrator.js on init. Not for agents.
+export function __configure(config) {
+  // Merges: `init` is called more than once (the engine factory passes the
+  // provider catalog, the session adds its module base), and the second call
+  // must not blank what the first set.
+  if (!config) return;
+  if (config.providerCatalog) providerCatalog = config.providerCatalog;
+  // `__moduleBase` must stay a global: the socle's `Service` prelude
+  // (KaozJSCore/service.c) reads it to absolutize a relative sub-agent
+  // specifier, and the socle ships no modules of its own.
+  if (config.moduleBase) globalThis.__moduleBase = config.moduleBase;
+}
+
 // --- LLM providers ----------------------------------------------------------
 // A provider handle: `provider("mlx", { model }).chat(messages, { tools }, onToken)`.
 // `id` selects the provider (omit for the run's default); extra options (model,
 // baseURL, …) go to the host's Swift resolver. Secrets stay in Swift — never
 // pass an API key from here.
-//
-// NOTE: agent-orchestrator.js still assigns its own copy onto `host.provider`
-// for agents that use the global. That duplication is deliberate for this step
-// and disappears when the orchestrator itself imports from this module.
 
 export function provider(id, providerOpts) {
   const opts = providerOpts || {};
@@ -69,5 +84,9 @@ export function provider(id, providerOpts) {
 /// The run's configured provider (whatever `--provider` / the app selected).
 export const llm = provider();
 
-/// The provider ids and names the host exposes, for discovery from JS.
-export function providers() { return globalThis.__providerCatalog || []; }
+/// The provider ids and names the host exposes, for discovery from JS. Falls
+/// back to the global for a heap restored from a snapshot written before the
+/// catalog moved into module scope.
+export function providers() {
+  return providerCatalog.length ? providerCatalog : (globalThis.__providerCatalog || []);
+}

@@ -229,21 +229,32 @@ private nonisolated final class AgentSession {
         if let roots {
             engine.withMachine { _ in JSResource.registerRoots(roots) }
         }
+        guard let orchestrator = JSResource.path("agent-orchestrator") else {
+            complete(.failure(AgentError.engineCreationFailed))
+            return
+        }
         if let base = moduleBase {
-            _ = try? engine.eval("globalThis.__moduleBase = \(AgentJSON.jsLiteral(base.path))")
+            // Second init call: __configure merges, so this does not blank the
+            // provider catalog the engine factory already published.
+            _ = try? engine.callModule(
+                orchestrator, export: "init",
+                params: AgentJSON.string(["moduleBase": base.path]))
         }
 
         do {
-            // The agent runs in module goal (dynamic import in __runAgent), so it
-            // can use static `import ... from`.
-            // The input rides in as the native global `__xsbInput` (not spliced
-            // into source), so a document-sized payload can't overflow the XS
-            // lexer's parser buffer. __runAgent JSON.parses it at its top.
-            let inputJSON = AgentJSON.string(input ?? NSNull())
-            _ = try engine.eval(
-                "__runAgent(\(AgentJSON.jsLiteral(entry)), __xsbInput)",
-                input: inputJSON)
+            // The agent runs in module goal (the orchestrator dynamic-imports it),
+            // so it can use static `import ... from`.
+            // The payload rides in as a native string rather than spliced into
+            // source: a document-sized value would overflow the XS lexer's parser
+            // buffer. callModule parses it and hands the export a real value.
+            _ = try engine.callModule(
+                orchestrator, export: "runAgent",
+                params: AgentJSON.string(["path": entry, "input": input ?? NSNull()]))
         } catch let error as XSError {
+            // Synchronous failure only (unresolvable orchestrator, syntax error).
+            // The agent's own failures — a missing run(), a throw, a rejection —
+            // travel through host.__fail and land on `complete` via onFail, which
+            // is why this catch no longer needs to know about them.
             complete(.failure(AgentError.evaluation(error.message)))
         } catch {
             complete(.failure(error))

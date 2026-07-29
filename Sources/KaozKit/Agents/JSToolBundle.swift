@@ -101,12 +101,18 @@ public nonisolated final class JSToolBundle: @unchecked Sendable {
             waiters[callId] = { continuation.resume(with: $0) }
             lock.unlock()
 
-            let invoke = "__callTool("
-                + "\(AgentJSON.jsLiteral(name)), "
-                + "\(AgentJSON.jsLiteral(argsJSON)), "
-                + "\(AgentJSON.jsLiteral(callId)))"
+            // The tool's arguments are already JSON; hand them to the export as a
+            // parsed value rather than re-embedding a JSON string in source.
+            let args: Any = argsJSON.data(using: .utf8).flatMap {
+                try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed])
+            } ?? NSNull()
             do {
-                _ = try engine.eval(invoke)
+                guard let orchestrator = JSResource.path("agent-orchestrator") else {
+                    throw ToolError.execution(message: "orchestrateur JS introuvable")
+                }
+                _ = try engine.callModule(
+                    orchestrator, export: "callTool",
+                    params: AgentJSON.string(["name": name, "args": args, "callId": callId]))
             } catch let error as XSError {
                 resolveWaiter(callId, .failure(ToolError.execution(message: error.message)))
             } catch {
