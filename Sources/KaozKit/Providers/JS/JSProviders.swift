@@ -82,10 +82,12 @@ public enum JSProviders {
     /// Kimi K3 (Moonshot AI) — OpenAI-compatible Chat Completions, so it reuses
     /// the `openai` module. Default endpoint https://api.moonshot.ai/v1; the
     /// stream carries both `content` and `reasoning_content` deltas.
-    public static func kimi(apiKey: String, model: String = "kimi-k3", baseURL: String? = nil) -> JSProvider? {
+    public static func kimi(
+        apiKey: String, model: String = KimiProvider.defaultModel, baseURL: String? = nil
+    ) -> JSProvider? {
         openaiCompatible(
             id: "kimi-js", displayName: "Kimi (JS)", apiKey: apiKey, model: model,
-            baseURL: baseURL ?? "https://api.moonshot.ai/v1")
+            baseURL: baseURL ?? KimiProvider.baseURL.absoluteString)
     }
 
     /// Xiaomi MiMo's OpenAI-compatible endpoint in JavaScript. Unlike the native
