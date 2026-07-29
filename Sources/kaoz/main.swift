@@ -168,15 +168,33 @@ let resolveProvider: @Sendable (String, [String: Any]) -> (any LLMProvider)? = {
             return nil
         }
         return JSProviders.anthropic(apiKey: key, model: model, baseURL: base("ANTHROPIC_BASE_URL"))
+    case "openai":
+        guard let key = env["OPENAI_API_KEY"], !key.isEmpty, let model, !model.isEmpty else {
+            return nil
+        }
+        return OpenAIProvider(apiKey: key, model: model)
     case "js-openai":
         guard let key = env["OPENAI_API_KEY"], !key.isEmpty, let model, !model.isEmpty else {
             return nil
         }
         return JSProviders.openai(apiKey: key, model: model, baseURL: base("OPENAI_BASE_URL"))
+    case "ollama":
+        guard let model, !model.isEmpty,
+              let url = URL(string: base("OLLAMA_BASE_URL") ?? "http://localhost:11434") else {
+            return nil
+        }
+        return OllamaProvider(baseURL: url, model: model)
     case "js-ollama":
         guard let model, !model.isEmpty else { return nil }
         return JSProviders.ollama(
             model: model, baseURL: base("OLLAMA_BASE_URL") ?? "http://localhost:11434")
+    case "google":
+        // No baseURL knob: GoogleClient hardcodes the endpoint, unlike js-google.
+        guard let key = env["GOOGLE_API_KEY"] ?? env["GOOGLEAI_API_KEY"], !key.isEmpty,
+              let model, !model.isEmpty else {
+            return nil
+        }
+        return GoogleProvider(apiKey: key, model: model)
     case "js-google":
         guard let key = env["GOOGLE_API_KEY"] ?? env["GOOGLEAI_API_KEY"], !key.isEmpty,
               let model, !model.isEmpty else {
@@ -233,8 +251,11 @@ let makeProvider: @Sendable () -> (any LLMProvider)? = { resolveProvider(provide
 let providerCatalog: [ProviderDescriptor] = [
     .init(id: "anthropic", name: "Anthropic", model: model),
     .init(id: "js-anthropic", name: "Anthropic (JS)", model: model),
+    .init(id: "openai", name: "OpenAI", model: model),
     .init(id: "js-openai", name: "OpenAI-compatible (JS)", model: model),
+    .init(id: "ollama", name: "Ollama", model: model),
     .init(id: "js-ollama", name: "Ollama (JS)", model: model),
+    .init(id: "google", name: "Google Gemini", model: model),
     .init(id: "js-google", name: "Google Gemini (JS)", model: model),
     .init(id: "kimi", name: "Kimi (Moonshot)", model: model ?? KimiProvider.defaultModel),
     .init(id: "js-kimi", name: "Kimi K3 (JS)", model: model ?? KimiProvider.defaultModel),
