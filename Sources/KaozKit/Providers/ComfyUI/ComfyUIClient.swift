@@ -162,10 +162,18 @@ public struct ComfyUIClient {
 
     private static let wholeMarkerRegex = try! Regex("%([A-Za-z_][A-Za-z0-9_]*)(?:=[^%]*)?%")
 
-    /// Int if it parses as one, else Double, else the raw string. Keeps
-    /// numeric knobs numeric in the submitted JSON while leaving names
-    /// (samplers, schedulers) as strings.
+    /// Bool if it reads as one, else Int, else Double, else the raw string.
+    /// Keeps numeric knobs numeric and boolean knobs boolean in the submitted
+    /// JSON — a `PrimitiveBoolean` node rejects the string "false" — while
+    /// leaving names (samplers, schedulers) as strings. Only the two literals
+    /// are boolean: "1"/"0" stay integers, since a node taking an int must not
+    /// silently receive a bool.
     private static func coerce(_ s: String) -> Any {
+        switch s.lowercased() {
+        case "true": return true
+        case "false": return false
+        default: break
+        }
         if let i = Int(s) { return i }
         if let d = Double(s) { return d }
         return s
