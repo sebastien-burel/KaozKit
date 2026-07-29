@@ -19,6 +19,9 @@ public final class JSProvider: LLMProvider, @unchecked Sendable {
 
     private let config: [String: Any]
     private let engine: XSEngine
+    /// Absolute bundle path of provider-orchestrator.js — the module whose
+    /// exports drive this engine.
+    private let orchestratorPath: String
     private let lock = NSLock()
     private var continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation?
     private var callToken: UInt64 = 0
@@ -36,6 +39,7 @@ public final class JSProvider: LLMProvider, @unchecked Sendable {
         self.displayName = displayName
         self.config = config
         self.engine = engine
+        self.orchestratorPath = orchestratorPath
 
         let ptr = Unmanaged.passUnretained(self).toOpaque()
         engine.withMachine { machine in
@@ -43,19 +47,14 @@ public final class JSProvider: LLMProvider, @unchecked Sendable {
             xsBridgeJSProviderInstall(machine)
             xsBridgeSetContext(machine, ptr)
         }
-        // Dynamic import resolves within eval's promise-drain, so tyProvider and
-        // __runProviderChat are set by the time this returns.
-        let bootstrap = """
-        globalThis.__ready = (async function () {
-            const m = await import(\(AgentJSON.jsLiteral(providerPath)));
-            globalThis.tyProvider = m.default;
-            await import(\(AgentJSON.jsLiteral(orchestratorPath)));
-        })();
-        """
-        guard (try? engine.eval(bootstrap)) != nil,
-              (try? engine.eval(
-                "typeof globalThis.__runProviderChat === 'function' "
-                + "&& !!globalThis.tyProvider")) == "true"
+        // One call: importing the orchestrator and loading the provider module
+        // both happen inside it, and the import resolves within the call's drain.
+        // The readiness verdict comes back through a probe global — a module call
+        // cannot return a promise's value to Swift.
+        guard (try? engine.callModule(
+                orchestratorPath, export: "init",
+                params: AgentJSON.string(["module": providerPath]))) != nil,
+              (try? engine.eval("globalThis.__kaozProviderReady === true")) == "true"
         else { return nil }
     }
 
@@ -95,12 +94,11 @@ public final class JSProvider: LLMProvider, @unchecked Sendable {
             ]
             let json = AgentJSON.string(request)
             do {
-                // The request rides in as the native global `__xsbInput`, not
-                // spliced into source: a conversation carrying a large tool
-                // result (e.g. a 94 KB wiki page) would otherwise overflow the
-                // XS lexer's parser buffer. __runProviderChat JSON.parses it
-                // synchronously at its top, before this eval returns.
-                _ = try engine.eval("__runProviderChat(__xsbInput)", input: json)
+                // The request rides in as a native string, not spliced into
+                // source: a conversation carrying a large tool result (e.g. a
+                // 94 KB wiki page) would overflow the XS lexer's parser buffer.
+                // callModule parses it and hands `chat` a real value.
+                _ = try engine.callModule(orchestratorPath, export: "chat", params: json)
             } catch let error as XSError {
                 finishOnce(throwing: error)
             } catch {

@@ -14,6 +14,9 @@ public nonisolated final class JSToolBundle: @unchecked Sendable {
 
     private let engine: XSEngine
     private let host: TyKaozHost
+    /// Module whose `callTool` export runs a tool. The agent orchestrator for a
+    /// consumer-supplied script (it owns the legacy path), tool-bundle otherwise.
+    private let bundleModule: String
     private let lock = NSLock()
     private var waiters: [String: (Result<String, Error>) -> Void] = [:]
 
@@ -41,6 +44,10 @@ public nonisolated final class JSToolBundle: @unchecked Sendable {
         guard let engine = XSEngine.tyKaoz(host: host, name: "js-tools") else { return nil }
         self.host = host
         self.engine = engine
+        // A consumer-supplied script declares globalThis.tools itself, so its
+        // tools are run by the agent orchestrator's callTool, as before.
+        guard let orchestrator = JSResource.path("agent-orchestrator") else { return nil }
+        self.bundleModule = orchestrator
         if installHTTP {
             engine.withMachine { xsBridgeHttpInstall($0) }
         }
@@ -64,7 +71,11 @@ public nonisolated final class JSToolBundle: @unchecked Sendable {
     /// Load JS tools that ship as bundled ES modules (`Resources/js/tools/<name>.js`,
     /// each `export default { name, description, input_schema, run }`). Installs
     /// `__http` so HTTP tools can use the `XMLHttpRequest` shim.
-    public convenience init?(
+    ///
+    /// Goes through the bundled `tool-bundle` module rather than a generated
+    /// bootstrap script: the imports happen in JS, and the specs come back through
+    /// a probe global instead of an eval's return value.
+    public init?(
         toolModules names: [String],
         config: [String: Any] = [:],
         makeProvider: @escaping @Sendable () -> (any LLMProvider)? = { nil },
@@ -73,19 +84,37 @@ public nonisolated final class JSToolBundle: @unchecked Sendable {
         log: @escaping @Sendable (String) -> Void = { _ in }
     ) {
         let paths = names.compactMap { JSResource.path("tools/\($0)") }
-        guard paths.count == names.count else { return nil }
-        let imports = paths.map { "import(\(AgentJSON.jsLiteral($0)))" }.joined(separator: ", ")
-        // Dynamic imports resolve within eval's drain, so globalThis.tools is
-        // populated by the time init reads the specs.
-        let bootstrap = """
-        globalThis.tools = [];
-        globalThis.__toolsReady = (async function () {
-            const mods = await Promise.all([\(imports)]);
-            for (const m of mods) globalThis.tools.push(m.default);
-        })();
-        """
-        self.init(script: bootstrap, installHTTP: true, config: config,
-                  makeProvider: makeProvider, tools: tools, memory: memory, log: log)
+        guard paths.count == names.count,
+              let bundlePath = JSResource.path("tool-bundle")
+        else { return nil }
+
+        let host = TyKaozHost(
+            makeProvider: makeProvider, tools: tools, memory: memory, log: log)
+        guard let engine = XSEngine.tyKaoz(host: host, name: "js-tools") else { return nil }
+        self.host = host
+        self.engine = engine
+        self.bundleModule = bundlePath
+        engine.withMachine { xsBridgeHttpInstall($0) }
+
+        guard (try? engine.callModule(
+                bundlePath, export: "init",
+                params: AgentJSON.string(["modules": paths, "config": config]))) != nil,
+              let specsJSON = try? engine.eval("globalThis.__kaozToolSpecs"),
+              specsJSON != "null"
+        else { return nil }
+        // The probe global holds a JSON *string*; eval hands it back JSON-encoded.
+        self.specs = JSToolBundle.parseSpecs(JSToolBundle.unquote(specsJSON))
+
+        host.onToolResult = { [weak self] params in self?.deliver(params) }
+    }
+
+    /// Un-encode a JS string that `eval` returned as JSON (`"\"[...]\""` → `[...]`).
+    private static func unquote(_ json: String) -> String {
+        guard let data = json.data(using: .utf8),
+              let s = try? JSONSerialization.jsonObject(
+                with: data, options: [.fragmentsAllowed]) as? String
+        else { return json }
+        return s
     }
 
     /// The native `Tool` wrappers for each declared tool.
@@ -107,11 +136,8 @@ public nonisolated final class JSToolBundle: @unchecked Sendable {
                 try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed])
             } ?? NSNull()
             do {
-                guard let orchestrator = JSResource.path("agent-orchestrator") else {
-                    throw ToolError.execution(message: "orchestrateur JS introuvable")
-                }
                 _ = try engine.callModule(
-                    orchestrator, export: "callTool",
+                    bundleModule, export: "callTool",
                     params: AgentJSON.string(["name": name, "args": args, "callId": callId]))
             } catch let error as XSError {
                 resolveWaiter(callId, .failure(ToolError.execution(message: error.message)))
