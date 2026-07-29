@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 
 /* ---------------------------------------------------------------------------
  * Platform layer. The macOS port (mac_xs.c) now provides the run-loop
@@ -101,8 +102,44 @@ typedef struct ModuleRoot {
 
 static ModuleRoot* gModuleRoots = NULL;
 
+/* The root and trusted-prefix registries are process-wide, but every machine
+ * runs on its own thread: one engine can be freeing nodes in Clear* while
+ * another walks the list inside fxFindModule. That was a use-after-free.
+ *
+ * Recursive, because the readers nest: fxFindModule holds the lock across a
+ * resolution and fxModuleAllowed / fxPathTrusted lock again underneath.
+ *
+ * This makes concurrent access SAFE; it does not make it CORRECT. Two
+ * concurrent rooted runs still clobber each other's roots, because Clear* is
+ * unconditional (AgentSession.start clears then re-registers, complete clears
+ * again). Fixing that needs per-machine roots or refcounting — a separate,
+ * larger change. */
+static pthread_mutex_t gRootsMutex;
+static pthread_once_t gRootsOnce = PTHREAD_ONCE_INIT;
+
+static void fxRootsMutexInit(void)
+{
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&gRootsMutex, &attr);
+    pthread_mutexattr_destroy(&attr);
+}
+
+static void fxRootsLock(void)
+{
+    pthread_once(&gRootsOnce, fxRootsMutexInit);
+    pthread_mutex_lock(&gRootsMutex);
+}
+
+static void fxRootsUnlock(void)
+{
+    pthread_mutex_unlock(&gRootsMutex);
+}
+
 void xsBridgeClearModuleRoots(void)
 {
+    fxRootsLock();
     ModuleRoot* p = gModuleRoots;
     while (p) {
         ModuleRoot* n = p->next;
@@ -112,6 +149,7 @@ void xsBridgeClearModuleRoots(void)
         p = n;
     }
     gModuleRoots = NULL;
+    fxRootsUnlock();
 }
 
 void xsBridgeAddModuleRoot(const char* prefix, const char* dir)
@@ -120,15 +158,20 @@ void xsBridgeAddModuleRoot(const char* prefix, const char* dir)
     if (!dir || !c_realpath(dir, real))
         return;                                    /* skip a missing directory */
     const char* pfx = prefix ? prefix : "";
-    for (ModuleRoot* r = gModuleRoots; r; r = r->next)     /* idempotent */
-        if (!c_strcmp(r->prefix, pfx) && !c_strcmp(r->dir, real))
+    fxRootsLock();
+    for (ModuleRoot* r = gModuleRoots; r; r = r->next) {   /* idempotent */
+        if (!c_strcmp(r->prefix, pfx) && !c_strcmp(r->dir, real)) {
+            fxRootsUnlock();
             return;
+        }
+    }
     ModuleRoot* root = (ModuleRoot*)calloc(1, sizeof(ModuleRoot));
     root->prefix = strdup(pfx);
     root->dir = strdup(real);
     ModuleRoot** pp = &gModuleRoots;               /* append, keep order */
     while (*pp) pp = &(*pp)->next;
     *pp = root;
+    fxRootsUnlock();
 }
 
 /* True if the absolute `path` is `dir` itself or a descendant of it. */
@@ -148,12 +191,19 @@ static int fxPathTrusted(const char* real);   /* defined with the trusted-prefix
  * bundle, so relative resolutions must accept trusted prefixes too). */
 static int fxModuleAllowed(const char* real)
 {
+    fxRootsLock();
+    int allowed = 0;
     if (!gModuleRoots)
-        return 1;
-    for (ModuleRoot* r = gModuleRoots; r; r = r->next)
-        if (fxPathInside(real, r->dir))
-            return 1;
-    return fxPathTrusted(real);
+        allowed = 1;
+    else {
+        for (ModuleRoot* r = gModuleRoots; r && !allowed; r = r->next)
+            if (fxPathInside(real, r->dir))
+                allowed = 1;
+        if (!allowed)
+            allowed = fxPathTrusted(real);    /* recursive lock */
+    }
+    fxRootsUnlock();
+    return allowed;
 }
 
 /* Trusted absolute-path prefixes — directories the framework itself loads
@@ -173,6 +223,7 @@ static TrustedPrefix* gTrustedPrefixes = NULL;
 
 void xsBridgeClearTrustedModulePrefixes(void)
 {
+    fxRootsLock();
     TrustedPrefix* p = gTrustedPrefixes;
     while (p) {
         TrustedPrefix* n = p->next;
@@ -181,6 +232,7 @@ void xsBridgeClearTrustedModulePrefixes(void)
         p = n;
     }
     gTrustedPrefixes = NULL;
+    fxRootsUnlock();
 }
 
 void xsBridgeAddTrustedModulePrefix(const char* dir)
@@ -188,22 +240,30 @@ void xsBridgeAddTrustedModulePrefix(const char* dir)
     char real[C_PATH_MAX];
     if (!dir || !c_realpath(dir, real))
         return;
-    for (TrustedPrefix* t = gTrustedPrefixes; t; t = t->next)   /* idempotent */
-        if (!c_strcmp(t->dir, real))
+    fxRootsLock();
+    for (TrustedPrefix* t = gTrustedPrefixes; t; t = t->next) {  /* idempotent */
+        if (!c_strcmp(t->dir, real)) {
+            fxRootsUnlock();
             return;
+        }
+    }
     TrustedPrefix* tp = (TrustedPrefix*)calloc(1, sizeof(TrustedPrefix));
     tp->dir = strdup(real);
     tp->next = gTrustedPrefixes;
     gTrustedPrefixes = tp;
+    fxRootsUnlock();
 }
 
 /* True if the resolved `real` sits inside a trusted framework prefix. */
 static int fxPathTrusted(const char* real)
 {
-    for (TrustedPrefix* t = gTrustedPrefixes; t; t = t->next)
+    fxRootsLock();
+    int trusted = 0;
+    for (TrustedPrefix* t = gTrustedPrefixes; t && !trusted; t = t->next)
         if (fxPathInside(real, t->dir))
-            return 1;
-    return 0;
+            trusted = 1;
+    fxRootsUnlock();
+    return trusted;
 }
 
 /* Try `base` verbatim (hasExt) or with each known extension in order; realpath
@@ -279,6 +339,10 @@ txID fxFindModule(txMachine* the, txSlot* realm, txID moduleID, txSlot* slot)
         return XS_NO_ID;
     }
 
+    /* Held across the whole walk: another engine's thread may Clear* the list
+     * while we traverse it. Recursive, so the fxModuleAllowed below re-locks
+     * harmlessly. */
+    fxRootsLock();
     if (gModuleRoots) {
         /* Bare specifier — resolve against a named or default root, then
          * confine (a `../` in the remainder can't escape the root set). */
@@ -298,11 +362,15 @@ txID fxFindModule(txMachine* the, txSlot* realm, txID moduleID, txSlot* slot)
             base[bl] = mxSeparator;
             base[bl + 1] = 0;
             c_strcat(base, rest);
-            if (fxResolveWithExt(base, hasExt, real) && fxModuleAllowed(real))
+            if (fxResolveWithExt(base, hasExt, real) && fxModuleAllowed(real)) {
+                fxRootsUnlock();
                 return fxNewNameC(the, real);
+            }
         }
+        fxRootsUnlock();
         return XS_NO_ID;
     }
+    fxRootsUnlock();
 
     /* No roots configured — legacy behaviour: realpath the specifier as-is. */
     if (c_realpath(name, real))
