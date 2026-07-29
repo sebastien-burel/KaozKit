@@ -227,10 +227,7 @@ private nonisolated final class AgentSession {
         // specifiers against them, confined to the roots. Registered here on the
         // XS thread, before any import; cleared in `complete`.
         if let roots {
-            engine.withMachine { _ in
-                xsBridgeClearModuleRoots()
-                for root in roots { xsBridgeAddModuleRoot(root.prefix, root.dir) }
-            }
+            engine.withMachine { _ in JSResource.registerRoots(roots) }
         }
         if let base = moduleBase {
             _ = try? engine.eval("globalThis.__moduleBase = \(AgentJSON.jsLiteral(base.path))")

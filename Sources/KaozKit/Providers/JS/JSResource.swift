@@ -21,6 +21,35 @@ enum JSResource {
         if let dir = directory?.path { xsBridgeAddTrustedModulePrefix(dir) }
     }()
 
+    /// The module-root prefix under which agents import the framework's own JS:
+    /// `import { llm } from "kaoz/host"`. A **named** prefix, not a default (`""`)
+    /// root — a default root on this directory would put every bundled file into
+    /// the agent's bare-specifier namespace.
+    static let rootPrefix = "kaoz"
+
+    /// The framework's root, to register alongside an agent's own roots.
+    static var frameworkRoot: (prefix: String, dir: String)? {
+        directory.map { (prefix: rootPrefix, dir: $0.path) }
+    }
+
+    /// Replace the process-wide module roots with `roots` **plus** the framework's
+    /// own, and mark the bundle trusted.
+    ///
+    /// The roots are process-wide, so every site that resets them must add the
+    /// framework root too or bundled imports stop resolving. Funnelling the three
+    /// call sites (one in `AgentRuntime`, two in `AgentHost`) through here is what
+    /// keeps them from drifting apart.
+    ///
+    /// Caller must already be on the engine's XS thread (inside `withMachine`).
+    static func registerRoots(_ roots: [(prefix: String, dir: String)]) {
+        _ = registerTrustedPrefix
+        xsBridgeClearModuleRoots()
+        for root in roots { xsBridgeAddModuleRoot(root.prefix, root.dir) }
+        if let framework = frameworkRoot {
+            xsBridgeAddModuleRoot(framework.prefix, framework.dir)
+        }
+    }
+
     /// Absolute filesystem path of a bundled `<name>.js` module, for `import()`.
     static func path(_ name: String) -> String? {
         directory?.appendingPathComponent("\(name).js").path

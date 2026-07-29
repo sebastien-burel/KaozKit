@@ -74,10 +74,7 @@ public nonisolated final class AgentHost: @unchecked Sendable {
         guard let engine = XSEngine.tyKaoz(host: host, name: entryModule) else { return nil }
         self.engine = engine
         if installThreads { engine.installThreads() }
-        engine.withMachine { _ in
-            xsBridgeClearModuleRoots()
-            for root in roots { xsBridgeAddModuleRoot(root.prefix, root.dir) }
-        }
+        engine.withMachine { _ in JSResource.registerRoots(roots) }
         wireDelivery()
         // Import the agent module once — import() resolves within the eval drain,
         // so __agent/__agentReady are set (or in flight) by the time this returns.
@@ -113,8 +110,7 @@ public nonisolated final class AgentHost: @unchecked Sendable {
         let hostPtr = Unmanaged.passUnretained(host).toOpaque()
         engine.withMachine { machine in
             xsBridgeSetContext(machine, hostPtr)
-            xsBridgeClearModuleRoots()
-            for root in roots { xsBridgeAddModuleRoot(root.prefix, root.dir) }
+            JSResource.registerRoots(roots)
         }
         wireDelivery()
     }
