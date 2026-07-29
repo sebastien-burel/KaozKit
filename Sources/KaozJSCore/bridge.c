@@ -780,17 +780,46 @@ static int xsBridgeBufRead(void* stream, void* address, size_t size)
 /* Fill a txSnapshot's version tag + callback table (shared by write/read).
  * `callbacks` must hold gHostCount + XSB_SUPPLEMENT_COUNT entries: the host
  * functions first (guarded by the name list), then the engine supplements. */
+/* The snapshot compatibility tag, derived from the layout the snapshot actually
+ * serialises rather than from the build date.
+ *
+ * It used to be `"XSBridge " __DATE__`, which was wrong in both directions:
+ * recompiling this file on another calendar day invalidated every existing
+ * heap, while two builds on the SAME day with a changed layout passed unnoticed.
+ *
+ * The struct sizes move whenever an ABI-affecting define does (mxSnapshot,
+ * mxDebug, mxStringInfoCacheLength, the platform header), so they capture
+ * incompatibility empirically — no need to enumerate the defines and hope the
+ * list is complete.
+ *
+ * Deliberately EXCLUDES the host table: xsBridgeReadSnapshot prefix-checks it
+ * separately and accepts a longer one, which is how appending a host function
+ * stays compatible. Folding it in here would forbid exactly that. Bump the
+ * leading number by hand if a change breaks compatibility without moving any of
+ * these sizes. */
+static char gSnapshotSignature[96];
+static pthread_once_t gSnapshotSignatureOnce = PTHREAD_ONCE_INIT;
+
+static void fxBuildSnapshotSignature(void)
+{
+  snprintf(gSnapshotSignature, sizeof(gSnapshotSignature),
+           "XSBridge/1 xs=%d.%d slot=%u chunk=%u machine=%u",
+           (int)XS_MAJOR_VERSION, (int)XS_MINOR_VERSION,
+           (unsigned)sizeof(txSlot), (unsigned)sizeof(txChunk),
+           (unsigned)sizeof(txMachine));
+}
+
 static void xsBridgeFillSnapshot(txSnapshot* snap, txCallback* callbacks)
 {
-  static char signature[] = "XSBridge " __DATE__;
+  pthread_once(&gSnapshotSignatureOnce, fxBuildSnapshotSignature);
   int n = 0;
   for (int i = 0; i < gHostCount; i++)
     callbacks[n++] = gHostTable[i].callback;
   for (int i = 0; i < XSB_SUPPLEMENT_COUNT; i++)
     callbacks[n++] = gEngineSupplements[i];
   memset(snap, 0, sizeof(txSnapshot));
-  snap->signature = (txString)signature;
-  snap->signatureLength = sizeof(signature) - 1;
+  snap->signature = (txString)gSnapshotSignature;
+  snap->signatureLength = (txSize)strlen(gSnapshotSignature);
   snap->callbacks = callbacks;
   snap->callbacksLength = n;
 }
