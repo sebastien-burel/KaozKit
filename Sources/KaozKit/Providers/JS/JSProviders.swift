@@ -88,6 +88,15 @@ public enum JSProviders {
             baseURL: baseURL ?? "https://api.moonshot.ai/v1")
     }
 
+    /// Xiaomi MiMo's OpenAI-compatible endpoint in JavaScript. Unlike the native
+    /// MiMoProvider this sends only the Bearer header, which is what MiMo's own
+    /// OpenAI-SDK examples rely on.
+    public static func mimo(apiKey: String, model: String, baseURL: String? = nil) -> JSProvider? {
+        openaiCompatible(
+            id: "mimo-js", displayName: "Xiaomi MiMo (JS)", apiKey: apiKey, model: model,
+            baseURL: baseURL ?? "https://api.xiaomimimo.com/v1")
+    }
+
     /// Google Gemini's `:streamGenerateContent?alt=sse` in JavaScript. `baseURL`
     /// defaults to the v1beta endpoint. The API key goes in `x-goog-api-key`.
     public static func google(apiKey: String, model: String, baseURL: String? = nil) -> JSProvider? {

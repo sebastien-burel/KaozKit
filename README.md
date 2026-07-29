@@ -184,7 +184,7 @@ non-zero exit.
 
 Secrets are read from the environment: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GOOGLE_API_KEY`/`GOOGLEAI_API_KEY`, `MOONSHOT_API_KEY`/`KIMI_API_KEY`,
-`TYKAOZ_LOCAL_BASE_URL`, `BRAVE_API_KEY`
+`MIMO_API_KEY`/`XIAOMI_API_KEY`, `TYKAOZ_LOCAL_BASE_URL`, `BRAVE_API_KEY`
 (enables `web_search`), `PROTON_BRIDGE_*` (email), `TYKAOZ_MODEL`, `TYKAOZ_MEMORY_FILE`.
 
 ## The engine layer (KaozJS)

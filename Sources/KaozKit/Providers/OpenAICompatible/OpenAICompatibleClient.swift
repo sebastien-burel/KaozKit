@@ -31,11 +31,19 @@ public struct OpenAICompatibleClient {
     public let baseURL: URL
     public let apiKey: String
     public let session: URLSession
+    /// Sent on every request, after the Bearer header. For a provider that
+    /// documents its own auth field (Xiaomi MiMo asks for `api-key`) while
+    /// still accepting the standard one — send both rather than guess.
+    public let extraHeaders: [String: String]
 
-    public init(baseURL: URL, apiKey: String, session: URLSession = .shared) {
+    public init(
+        baseURL: URL, apiKey: String, session: URLSession = .shared,
+        extraHeaders: [String: String] = [:]
+    ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.session = session
+        self.extraHeaders = extraHeaders
     }
 
     // MARK: - Embeddings
@@ -53,6 +61,9 @@ public struct OpenAICompatibleClient {
             "Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))",
             forHTTPHeaderField: "Authorization"
         )
+        for (field, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
         request.timeoutInterval = 60
 
         let body: [String: Any] = ["model": model, "input": inputs]
@@ -104,6 +115,9 @@ public struct OpenAICompatibleClient {
             "Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))",
             forHTTPHeaderField: "Authorization"
         )
+        for (field, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
 
         let data: Data
         let response: URLResponse
@@ -172,6 +186,9 @@ public struct OpenAICompatibleClient {
                         "Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))",
                         forHTTPHeaderField: "Authorization"
                     )
+                    for (field, value) in extraHeaders {
+                        request.setValue(value, forHTTPHeaderField: field)
+                    }
                     request.timeoutInterval = 60
                     request.httpBody = try Self.buildBody(model: model, messages: messages, tools: tools)
 
@@ -428,6 +445,9 @@ public struct OpenAICompatibleClient {
             "Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))",
             forHTTPHeaderField: "Authorization"
         )
+        for (field, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
         request.timeoutInterval = 120
 
         var body: [String: Any] = ["model": model, "prompt": prompt]
@@ -500,6 +520,9 @@ public struct OpenAICompatibleClient {
             "Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))",
             forHTTPHeaderField: "Authorization"
         )
+        for (field, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
         request.timeoutInterval = 120
         request.httpBody = Self.multipartBody(
             boundary: boundary, fields: ["model": model, "prompt": prompt], images: images)
@@ -602,6 +625,9 @@ public struct OpenAICompatibleClient {
             "Bearer \(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))",
             forHTTPHeaderField: "Authorization"
         )
+        for (field, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
         request.timeoutInterval = 120
 
         // Attached images turn this into an edit: include them in the

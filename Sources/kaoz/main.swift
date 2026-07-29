@@ -183,6 +183,20 @@ let resolveProvider: @Sendable (String, [String: Any]) -> (any LLMProvider)? = {
             return nil
         }
         return JSProviders.google(apiKey: key, model: model, baseURL: base("GOOGLE_BASE_URL"))
+    case "mimo":
+        guard let key = env["MIMO_API_KEY"] ?? env["XIAOMI_API_KEY"], !key.isEmpty,
+              let model, !model.isEmpty else {
+            return nil
+        }
+        return MiMoProvider(
+            apiKey: key, model: model,
+            baseURL: base("MIMO_BASE_URL").flatMap(URL.init(string:)) ?? MiMoProvider.baseURL)
+    case "js-mimo":
+        guard let key = env["MIMO_API_KEY"] ?? env["XIAOMI_API_KEY"], !key.isEmpty,
+              let model, !model.isEmpty else {
+            return nil
+        }
+        return JSProviders.mimo(apiKey: key, model: model, baseURL: base("MIMO_BASE_URL"))
     case "js-kimi":
         guard let key = env["MOONSHOT_API_KEY"] ?? env["KIMI_API_KEY"], !key.isEmpty else {
             return nil
@@ -216,6 +230,8 @@ let providerCatalog: [ProviderDescriptor] = [
     .init(id: "js-ollama", name: "Ollama (JS)", model: model),
     .init(id: "js-google", name: "Google Gemini (JS)", model: model),
     .init(id: "js-kimi", name: "Kimi K3 (JS)", model: model ?? "kimi-k3"),
+    .init(id: "mimo", name: "Xiaomi MiMo", model: model ?? "mimo-v2.5-pro"),
+    .init(id: "js-mimo", name: "Xiaomi MiMo (JS)", model: model ?? "mimo-v2.5-pro"),
     .init(id: "local", name: "Local OpenAI", model: model),
     .init(id: "apple", name: "Apple Intelligence"),
     .init(id: "mlx", name: "MLX", model: model),
