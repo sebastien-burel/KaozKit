@@ -59,13 +59,25 @@ let package = Package(
         .executable(name: "kaoz", targets: ["kaoz"]),
     ],
     dependencies: [
-        // Pinned exactly, not `from:`. mlx-swift-lm 3.31.4 implements Gemma 4
-        // KV-cache sharing (no k_proj/v_proj past `num_kv_shared_layers`), which
-        // rejects checkpoints quantized before that change. Keep these in step
-        // with the TyKaoz app: `link-mlx-metallib.sh` copies its Cmlx metallib,
-        // so a version drift here also mismatches the Metal kernels.
-        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.4"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "3.31.3"),
+        // mlx-swift is pinned exactly and must stay in step with the TyKaoz app:
+        // `link-mlx-metallib.sh` copies that app's Cmlx metallib into this
+        // package's build, so a drift here mismatches the Metal kernels. Bumping
+        // this means bumping the app and re-running that script, in that order.
+        //
+        // 0.31.6 is required by the mlx-swift-lm revision below, which calls
+        // `MLXArray.maskFill` and `DType.greatestFiniteMagnitudeArray` — both
+        // added after 0.31.4.
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.6"),
+        // mlx-swift-lm rides an unreleased revision, deliberately. No published
+        // tag loads both of our Gemma 4 checkpoints: 3.31.3 has no
+        // `gemma4_unified` (the 12B), and 3.31.4's sanitizer drops the redundant
+        // k_proj/v_proj of KV-shared layers but not their k_norm, so the E4B
+        // fails on `layers.24.self_attn.k_norm`. This revision drops all three.
+        // A revision, never `branch:` — a branch would move the build under us.
+        // Revisit when 3.31.5 ships; it should carry both fixes.
+        .package(
+            url: "https://github.com/ml-explore/mlx-swift-lm",
+            revision: "a65e78f1e6cfb482a28788e1f250896a86a3c837"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
     ],
