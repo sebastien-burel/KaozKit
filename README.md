@@ -249,6 +249,8 @@ swift run -c release kaoz agent.js --provider anthropic --input '{"question":"�
 
 `KaozJSTests` is a multi-phase CLI harness whose demo host doubles as the engine regression suite; the JS fixtures it drives live in `agents/`.
 
+> **Known issue — command-line release builds (Xcode 26.5 / Swift 6.3.3).** `swift build -c release` hangs while expanding the `mlx-swift-lm` macros `KaozMLX` uses (`#hubDownloader()`, `#huggingFaceTokenizerLoader()`): the macro plugin stops answering and the compiler waits on it indefinitely, at 0 % CPU with no error. Only that path is affected — `xcodebuild -scheme KaozMLX -configuration Release` builds cleanly from an empty derived-data directory, as does Debug, and so does a plain `swift build`. The engine layer never touches those macros, so `swift build -c release --product KaozJSTests` and the regression suite above run normally.
+
 ## Status
 
 KaozKit is young and moving fast. The engine layer (`KaozJS`) is covered by a regression suite; the agent runtime API may still evolve before 1.0. Issues and questions are welcome — if you build something on KaozKit, I'd genuinely like to hear about it.
