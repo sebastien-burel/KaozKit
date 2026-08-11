@@ -249,7 +249,7 @@ swift run -c release kaoz agent.js --provider anthropic --input '{"question":"�
 
 `KaozJSTests` is a multi-phase CLI harness whose demo host doubles as the engine regression suite; the JS fixtures it drives live in `agents/`.
 
-> **Known issue — command-line release builds (Xcode 26.5 / Swift 6.3.3).** `swift build -c release` hangs while expanding the `mlx-swift-lm` macros `KaozMLX` uses (`#hubDownloader()`, `#huggingFaceTokenizerLoader()`): the macro plugin stops answering and the compiler waits on it indefinitely, at 0 % CPU with no error. Only that path is affected — `xcodebuild -scheme KaozMLX -configuration Release` builds cleanly from an empty derived-data directory, as does Debug, and so does a plain `swift build`. The engine layer never touches those macros, so `swift build -c release --product KaozJSTests` and the regression suite above run normally.
+> **If a build hangs at 0 % CPU with no error**, a stale macro-plugin binary in `.build` is the likely cause: `KaozMLX` expands the `mlx-swift-lm` macros (`#hubDownloader()`, `#huggingFaceTokenizerLoader()`) through a plugin executable, and once that binary is left corrupt — by an interrupted build, say — every later compile reuses it and waits forever on a process that answers nothing. SwiftPM never rebuilds it on its own. `rm -rf .build` clears it; re-run `scripts/link-mlx-metallib.sh` afterwards, since the Metal library lives there too.
 
 ## Status
 
