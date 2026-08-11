@@ -102,7 +102,7 @@ enum HttpHost {
 }
 
 @_cdecl("xsbHttpSend")
-func xsbHttpSend(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32,
+public func xsbHttpSend(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32,
                 _ requestJSON: UnsafePointer<CChar>?) {
     guard let bridge, let cstr = requestJSON else { return }
     HttpHost.send(bridge: bridge, id: id, requestJSON: String(cString: cstr))

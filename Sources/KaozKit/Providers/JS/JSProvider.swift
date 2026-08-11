@@ -194,19 +194,19 @@ private func provider(_ bridge: UnsafeMutableRawPointer) -> JSProvider? {
 }
 
 @_cdecl("xsbJSProviderEmit")
-func xsbJSProviderEmit(_ bridge: UnsafeMutableRawPointer?, _ eventJSON: UnsafePointer<CChar>?) {
+public func xsbJSProviderEmit(_ bridge: UnsafeMutableRawPointer?, _ eventJSON: UnsafePointer<CChar>?) {
     guard let bridge, let p = provider(bridge) else { return }
     p.emit(eventJSON.map { String(cString: $0) } ?? "")
 }
 
 @_cdecl("xsbJSProviderDone")
-func xsbJSProviderDone(_ bridge: UnsafeMutableRawPointer?) {
+public func xsbJSProviderDone(_ bridge: UnsafeMutableRawPointer?) {
     guard let bridge, let p = provider(bridge) else { return }
     p.done()
 }
 
 @_cdecl("xsbJSProviderError")
-func xsbJSProviderError(_ bridge: UnsafeMutableRawPointer?, _ message: UnsafePointer<CChar>?) {
+public func xsbJSProviderError(_ bridge: UnsafeMutableRawPointer?, _ message: UnsafePointer<CChar>?) {
     guard let bridge, let p = provider(bridge) else { return }
     p.failed(message.map { String(cString: $0) } ?? "provider error")
 }

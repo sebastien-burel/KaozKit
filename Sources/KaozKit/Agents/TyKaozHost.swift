@@ -368,69 +368,75 @@ private func tyHost(_ bridge: UnsafeMutableRawPointer) -> TyKaozHost? {
 private func string(_ p: UnsafePointer<CChar>?) -> String { p.map { String(cString: $0) } ?? "" }
 
 // MARK: - C-callable entry points (installed by KaozHostC, resolved at link)
+//
+// `public` is load-bearing, not style. An internal `@_cdecl` emits its C symbol
+// as a *private extern*, which resolves fine when every object is handed to the
+// linker at once (SwiftPM). Xcode pre-links each target with `ld -r`, and that
+// demotes private externs to local — the symbol then disappears from KaozKit.o
+// and KaozHostC.o fails to find it. Public keeps them externally visible.
 
 @_cdecl("xsbTyLog")
-func xsbTyLog(_ bridge: UnsafeMutableRawPointer?, _ text: UnsafePointer<CChar>?) {
+public func xsbTyLog(_ bridge: UnsafeMutableRawPointer?, _ text: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.log(string(text))
 }
 
 @_cdecl("xsbTyReport")
-func xsbTyReport(_ bridge: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>?) {
+public func xsbTyReport(_ bridge: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.onReport?(string(json))
 }
 
 @_cdecl("xsbTyFail")
-func xsbTyFail(_ bridge: UnsafeMutableRawPointer?, _ text: UnsafePointer<CChar>?) {
+public func xsbTyFail(_ bridge: UnsafeMutableRawPointer?, _ text: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.onFail?(string(text))
 }
 
 @_cdecl("xsbTyChat")
-func xsbTyChat(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
+public func xsbTyChat(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.chat(params: AgentJSON.params(string(json)), reply: HostReply(bridge: bridge, id: id))
 }
 
 @_cdecl("xsbTyToolList")
-func xsbTyToolList(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32) {
+public func xsbTyToolList(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.toolList(reply: HostReply(bridge: bridge, id: id))
 }
 
 @_cdecl("xsbTyToolCall")
-func xsbTyToolCall(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
+public func xsbTyToolCall(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.toolCall(params: AgentJSON.params(string(json)), reply: HostReply(bridge: bridge, id: id))
 }
 
 @_cdecl("xsbTyMemorySave")
-func xsbTyMemorySave(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
+public func xsbTyMemorySave(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.memorySave(params: AgentJSON.params(string(json)), reply: HostReply(bridge: bridge, id: id))
 }
 
 @_cdecl("xsbTyMemoryRead")
-func xsbTyMemoryRead(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
+public func xsbTyMemoryRead(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.memoryRead(params: AgentJSON.params(string(json)), reply: HostReply(bridge: bridge, id: id))
 }
 
 @_cdecl("xsbTyMemoryList")
-func xsbTyMemoryList(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32) {
+public func xsbTyMemoryList(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.memoryList(reply: HostReply(bridge: bridge, id: id))
 }
 
 @_cdecl("xsbTyToolResult")
-func xsbTyToolResult(_ bridge: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>?) {
+public func xsbTyToolResult(_ bridge: UnsafeMutableRawPointer?, _ json: UnsafePointer<CChar>?) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.onToolResult?(AgentJSON.params(string(json)))
 }
 
 @_cdecl("xsbTyDeliverResult")
-func xsbTyDeliverResult(
+public func xsbTyDeliverResult(
     _ bridge: UnsafeMutableRawPointer?, _ id: UInt32,
     _ json: UnsafePointer<CChar>?, _ isError: Int32
 ) {
@@ -439,7 +445,7 @@ func xsbTyDeliverResult(
 }
 
 @_cdecl("xsbTySchedule")
-func xsbTySchedule(
+public func xsbTySchedule(
     _ bridge: UnsafeMutableRawPointer?, _ delayMs: Double,
     _ repeating: Int32, _ payload: UnsafePointer<CChar>?
 ) -> UInt32 {
@@ -448,13 +454,13 @@ func xsbTySchedule(
 }
 
 @_cdecl("xsbTyCancel")
-func xsbTyCancel(_ bridge: UnsafeMutableRawPointer?, _ handle: UInt32) {
+public func xsbTyCancel(_ bridge: UnsafeMutableRawPointer?, _ handle: UInt32) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.onCancel?(handle)
 }
 
 @_cdecl("xsbTyMemorySearch")
-func xsbTyMemorySearch(
+public func xsbTyMemorySearch(
     _ bridge: UnsafeMutableRawPointer?, _ id: UInt32, _ json: UnsafePointer<CChar>?
 ) {
     guard let bridge, let host = tyHost(bridge) else { return }
@@ -463,7 +469,7 @@ func xsbTyMemorySearch(
 }
 
 @_cdecl("xsbTyUsage")
-func xsbTyUsage(
+public func xsbTyUsage(
     _ bridge: UnsafeMutableRawPointer?,
     _ prompt: UnsafeMutablePointer<Double>?,
     _ completion: UnsafeMutablePointer<Double>?,
