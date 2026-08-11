@@ -265,32 +265,50 @@ public actor MLXChatActor {
         // (`fatalError` on an unmapped token) during encoding — not
         // catchable. Refuse with a clear message instead of taking the
         // whole app down. We check the same places the loader does.
-        if let dir = await MLXModelStore.shared.localDirectory(modelID: modelID),
-           !Self.hasChatTemplate(in: dir) {
+        let localDir = await MLXModelStore.shared.localDirectory(modelID: modelID)
+        if let localDir, !Self.hasChatTemplate(in: localDir) {
             throw ChatError.missingChatTemplate(modelID: modelID)
         }
 
         // Route on the catalog flag: VLM entries go through
         // VLMModelFactory (which knows about vision towers +
         // image processors), text-only chat through LLMModelFactory.
-        // Custom (off-catalog) IDs default to LLM — covers the
-        // common case and gives a clear error otherwise.
+        // Off-catalog IDs — the ones a user adds by hand — fall back to
+        // what the downloaded config declares, rather than assuming text:
+        // a supported VLM added that way would otherwise reach the wrong
+        // factory and fail as if it were unsupported. The catalog stays
+        // authoritative when it has an opinion.
         let entry = await ModelCatalogService.shared.entry(forID: modelID)
-        let isVision = entry?.isVision ?? false
+        let isVision = entry?.isVision
+            ?? localDir.map(Self.declaresVisionTower(in:))
+            ?? false
         let config = ModelConfiguration(id: modelID, revision: entry?.revision ?? "main")
         let loaded: ModelContainer
-        if isVision {
-            loaded = try await VLMModelFactory.shared.loadContainer(
-                from: downloader,
-                using: tokenizerLoader,
-                configuration: config
-            ) { _ in }
-        } else {
-            loaded = try await LLMModelFactory.shared.loadContainer(
-                from: downloader,
-                using: tokenizerLoader,
-                configuration: config
-            ) { _ in }
+        do {
+            if isVision {
+                loaded = try await VLMModelFactory.shared.loadContainer(
+                    from: downloader,
+                    using: tokenizerLoader,
+                    configuration: config
+                ) { _ in }
+            } else {
+                loaded = try await LLMModelFactory.shared.loadContainer(
+                    from: downloader,
+                    using: tokenizerLoader,
+                    configuration: config
+                ) { _ in }
+            }
+        } catch let error as ModelFactoryError {
+            // "Unsupported model type: x" reads like the model is broken.
+            // It means mlx-swift-lm has no implementation for that
+            // architecture — say so, and leave every other factory error
+            // (unreadable or malformed config) untouched.
+            switch error {
+            case .unsupportedModelType(let type), .unsupportedProcessorType(let type):
+                throw ChatError.architectureNotImplemented(modelID: modelID, type: type)
+            default:
+                throw error
+            }
         }
         // mlx-swift-lm's `infer(from: model_type)` only recognises
         // exact "gemma" — Gemma 3/4 ship config.json with model_type
@@ -312,9 +330,24 @@ public actor MLXChatActor {
 
     public enum ChatError: LocalizedError {
         case missingChatTemplate(modelID: String)
+        case architectureNotImplemented(modelID: String, type: String)
 
         public var errorDescription: String? {
             switch self {
+            case .architectureNotImplemented(let modelID, let type):
+                // Ne pas affirmer que l'amont ignore cette architecture : depuis
+                // le binaire, on ne sait que ce que connaît la version compilée
+                // ici. `gemma4_unified` existait en amont alors que la version
+                // épinglée l'ignorait — dire « pas implémenté » envoyait chercher
+                // un autre runtime quand il suffisait de changer de version.
+                return """
+                « \(modelID) » utilise l'architecture « \(type) », que la \
+                version de mlx-swift-lm compilée ici n'implémente pas — le \
+                modèle n'est pas en cause, et re-télécharger n'y changera \
+                rien. Une version plus récente de mlx-swift-lm la connaît \
+                peut-être ; sinon, utilise ce modèle via un runtime qui la \
+                supporte (Ollama, LM Studio).
+                """
             case .missingChatTemplate(let modelID):
                 return """
                 « \(modelID) » n'inclut pas de chat template \
@@ -342,6 +375,19 @@ public actor MLXChatActor {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
         return obj["chat_template"] != nil
+    }
+
+    /// True when the downloaded `config.json` declares a vision tower.
+    /// Every multimodal type mlx-swift-lm registers carries a
+    /// `vision_config` block, so its presence is a reliable signal for a
+    /// model the catalog says nothing about. Absent or unreadable config
+    /// ⇒ false, i.e. the previous text-only assumption.
+    private static func declaresVisionTower(in dir: URL) -> Bool {
+        let url = dir.appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: url),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return obj["vision_config"] != nil
     }
 
     // MARK: - Mapping
