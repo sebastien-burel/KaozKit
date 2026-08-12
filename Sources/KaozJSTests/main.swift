@@ -81,6 +81,15 @@ func residentBytes() -> UInt64 {
     return kr == KERN_SUCCESS ? info.resident_size : 0
 }
 
+/// Bytes currently allocated across every malloc zone. Unlike RSS this ignores
+/// freed-but-still-mapped regions, so it does not move with the allocator's
+/// large-block cache — which is what made the Phase 1 leak guard erratic.
+func allocatedBytes() -> UInt64 {
+    var stats = malloc_statistics_t()
+    malloc_zone_statistics(nil, &stats)   // nil = aggregate of every zone
+    return UInt64(stats.size_in_use)
+}
+
 // ---- Phase 1: machine lifecycle + synchronous eval ----
 do {
     let before = failures
@@ -123,57 +132,70 @@ do {
     }
 
     // Warm up so the one-time high-water marks are established before measuring:
-    // the allocator's mapped regions (one machine ≈ 16 MB chunk + slot heap) AND
-    // the pthread stack cache (each engine runs on its own 4 MB-stack thread, A3).
-    // The leak test is then growth ACROSS the loop, which must stay bounded — a
-    // true per-machine leak would scale with `iters` (hundreds of MB over 1000).
+    // a machine is a 16 MB chunk plus its slot heap, and the first few cycles
+    // are what make the allocator claim those regions. The leak test is then
+    // growth ACROSS the loop, which must stay flat — a true per-machine leak
+    // would scale with `iters` (hundreds of MB over 1000).
     for _ in 0..<50 { _ = cycle() }
 
-    // Steady-state RSS. libmalloc keeps freed large allocations (a machine's
-    // 16 MB chunk) in a per-zone cache for reuse, so a naive sample can show a
-    // spurious one-time +16 MB that is cache, not a leak. Ask the allocator to
-    // return cached free memory to the OS first, so RSS reflects true usage.
+    // Measure allocated bytes, NOT RSS. A machine's 16 MB chunk is a malloc
+    // allocation, so freeing it hands the region back to libmalloc — which
+    // keeps it mapped and resident in its large-block cache rather than
+    // returning it to the OS. `vmmap` names those regions outright: across one
+    // loop, MALLOC_LARGE (empty) went from 48 MB / 3 regions to 64 MB / 4, one
+    // more region of exactly initialChunkSize. Empty, i.e. already freed.
     //
-    // Pressure relief alone is not enough: `cycle` returns as soon as the last
-    // reference drops, but each engine tears its machine down on its own thread,
-    // so a sample taken right after the loop can still count machines that are
-    // on their way out. In release that showed up as 0, 1 or 3 extra 16 MB
-    // regions — a coin flip against any fixed threshold, while debug (slower,
-    // so already settled) read flat. Wait for RSS to stop moving instead of
-    // sleeping a fixed amount: two equal readings mean teardown has drained.
-    // The cap keeps a genuine leak from stalling the suite — it would never
-    // settle, and the assertion below is what must catch it.
-    func steadyRSS() -> UInt64 {
+    // RSS counts them all the same, so it measured allocator policy as much as
+    // engine usage: release runs read anywhere from +0.1 to +64.5 MB while
+    // debug read flat, making any fixed threshold a coin flip.
+    // malloc_zone_pressure_relief does not reclaim them either. Allocated bytes
+    // ignore freed regions by construction, which is exactly the property this
+    // guard needs. (The residue is not thread stacks: the same vmmap shows 5
+    // Stack regions totalling 160 KB resident, and shrinking the stacks to 1 MB
+    // left the 16 MB step untouched.)
+    //
+    // Settling is still required — `cycle` returns when the last reference
+    // drops, but each engine tears its machine down on its own thread, and a
+    // machine mid-teardown genuinely still owns its chunk. Wait for the reading
+    // to stop moving rather than sleeping a fixed amount. Equality is too
+    // strict (the Swift runtime allocates under our feet), hence the tolerance;
+    // the attempt cap keeps a real leak from stalling the suite, since it would
+    // never settle and the assertion below is what must catch it.
+    func steadyAllocated() -> UInt64 {
         var last: UInt64 = 0
         for attempt in 0..<20 {
             Thread.sleep(forTimeInterval: 0.1)
-            malloc_zone_pressure_relief(nil, 0)
-            let now = residentBytes()
-            if attempt > 0, now == last { return now }
+            let now = allocatedBytes()
+            let drift = now > last ? now - last : last - now   // UInt64: no negatives
+            if attempt > 0, drift < 64 * 1024 { return now }
             last = now
         }
         return last
     }
 
-    let rssBefore = steadyRSS()
+    let allocBefore = steadyAllocated()
+    let rssBefore = residentBytes()
     var loopOK = true
     for _ in 0..<iters {
         if !cycle() { loopOK = false; break }
     }
-    let rssAfter = steadyRSS()
+    let allocAfter = steadyAllocated()
+    let rssAfter = residentBytes()
     check("\(iters) machine create/eval/delete cycles", loopOK)
     let mb: Double = 1_048_576
-    let growthMB: Double = (Double(rssAfter) - Double(rssBefore)) / mb
-    print(String(format: "  RSS across loop: %.1f MB -> %.1f MB (delta %+.1f MB)",
-                 Double(rssBefore) / mb, Double(rssAfter) / mb, growthMB))
-    // Coarse machine-level guard: RSS must not grow unboundedly. The ceiling is
-    // generous (< 30 MB) on purpose — each engine runs on its own thread (A3),
-    // so cycling 1000 of them leaves the OS holding a small *bounded* cache of
-    // freed 4 MB thread stacks (~16 MB observed, doesn't scale with `iters`,
-    // not flushable via malloc APIs). A genuine leak (machines/threads/slots not
-    // freed) would be GB-scale here. Exact slot-leak detection is the
-    // remember/forget balance asserted in Phases 3-5.
-    check("no unbounded machine leak (delta < 30 MB)", growthMB < 30)
+    let growthMB: Double = (Double(allocAfter) - Double(allocBefore)) / mb
+    print(String(format: "  allocated across loop: %.1f MB -> %.1f MB (delta %+.2f MB)",
+                 Double(allocBefore) / mb, Double(allocAfter) / mb, growthMB))
+    // RSS is printed for diagnostics only — it moves with the allocator cache
+    // described above, so it must not decide the verdict.
+    print(String(format: "  RSS (informational): %.1f MB -> %.1f MB (delta %+.1f MB)",
+                 Double(rssBefore) / mb, Double(rssAfter) / mb,
+                 (Double(rssAfter) - Double(rssBefore)) / mb))
+    // Machine-level guard: allocated bytes must not grow with `iters`. A leaked
+    // machine is 16 MB, so anything real lands orders of magnitude above this
+    // ceiling; observed drift is a few tens of KB. Exact slot-leak detection is
+    // the remember/forget balance asserted in Phases 3-5.
+    check("no unbounded machine leak (delta < 2 MB)", growthMB < 2)
 
     phaseResult(1, before)
 }
