@@ -133,9 +133,26 @@ do {
     // 16 MB chunk) in a per-zone cache for reuse, so a naive sample can show a
     // spurious one-time +16 MB that is cache, not a leak. Ask the allocator to
     // return cached free memory to the OS first, so RSS reflects true usage.
+    //
+    // Pressure relief alone is not enough: `cycle` returns as soon as the last
+    // reference drops, but each engine tears its machine down on its own thread,
+    // so a sample taken right after the loop can still count machines that are
+    // on their way out. In release that showed up as 0, 1 or 3 extra 16 MB
+    // regions — a coin flip against any fixed threshold, while debug (slower,
+    // so already settled) read flat. Wait for RSS to stop moving instead of
+    // sleeping a fixed amount: two equal readings mean teardown has drained.
+    // The cap keeps a genuine leak from stalling the suite — it would never
+    // settle, and the assertion below is what must catch it.
     func steadyRSS() -> UInt64 {
-        malloc_zone_pressure_relief(nil, 0)
-        return residentBytes()
+        var last: UInt64 = 0
+        for attempt in 0..<20 {
+            Thread.sleep(forTimeInterval: 0.1)
+            malloc_zone_pressure_relief(nil, 0)
+            let now = residentBytes()
+            if attempt > 0, now == last { return now }
+            last = now
+        }
+        return last
     }
 
     let rssBefore = steadyRSS()
