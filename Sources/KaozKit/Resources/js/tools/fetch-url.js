@@ -21,15 +21,20 @@ export default {
     "Fetches the textual content at a public HTTP or HTTPS URL and returns the "
     + "body. For HTML pages, tags and inline scripts/styles are stripped, leaving "
     + "the readable text. Use when you need to read the content of a web page the "
-    + "user mentions. The result is capped at max_chars characters (default 10000).",
+    + "user mentions. The result is capped at max_chars characters (default 10000); "
+    + "raise it when fetching a whole document such as an RSS or Atom feed.",
   input_schema: {
     type: "object",
     properties: {
       url: { type: "string", description: "The HTTP or HTTPS URL to fetch." },
       max_chars: {
         type: "integer",
+        // The default stays small because most callers are language models
+        // paying for every character. The ceiling is high because some callers
+        // are programs: a full RSS feed runs past 100k, and truncating one
+        // costs articles.
         description: "Maximum number of characters to return (default 10000).",
-        minimum: 100, maximum: 100000,
+        minimum: 100, maximum: 2000000,
       },
     },
     required: ["url"],

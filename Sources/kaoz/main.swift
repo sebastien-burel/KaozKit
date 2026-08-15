@@ -322,13 +322,18 @@ if allowEmail {
     tools.append(SendEmailTool(config: emailConfig))
     tools.append(ReadEmailTool(config: emailConfig))
 }
-// HTTP / pure tools are JS modules (datetime, fetch_url, web_search).
+// HTTP / pure tools are JS modules (datetime, fetch_url, web_search, news_search).
 var jsToolNames = ["datetime", "fetch-url"]
 var toolConfig: [String: Any] = [:]
 if let brave = env["BRAVE_API_KEY"], !brave.isEmpty {
     jsToolNames.append("web-search")
     toolConfig["braveApiKey"] = brave
     if let base = env["BRAVE_BASE_URL"], !base.isEmpty { toolConfig["braveBaseURL"] = base }
+}
+if let newsAPI = env["NEWS_API_KEY"], !newsAPI.isEmpty {
+    jsToolNames.append("news-api")
+    toolConfig["newsApiKey"] = newsAPI
+    if let base = env["NEWS_API_BASE_URL"], !base.isEmpty { toolConfig["newsApiBaseURL"] = base }
 }
 if let jsTools = JSToolBundle(
     toolModules: jsToolNames, config: toolConfig,

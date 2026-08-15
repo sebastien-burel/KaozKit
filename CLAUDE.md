@@ -169,7 +169,7 @@ Sources/
     Channels/WebhookServer.swift  # inbound HTTP → resident agent delivery
     Support/                   # MemoryStoring, Subprocess
     Resources/js/              # JS loaded at runtime via Bundle.module: agent-orchestrator.js, provider-orchestrator.js,
-                               #   {anthropic,google,ollama,openai}.js, xmlhttprequest.js, tools/{datetime,fetch-url,web-search,http}.js
+                               #   {anthropic,google,ollama,openai}.js, xmlhttprequest.js, tools/{datetime,fetch-url,web-search,news-api,http}.js
   KaozMLX/                # Swift, opt-in: MLX local inference (MLXLLMProvider/MLXEmbeddingProvider + Models/ store & catalog)
   kaoz/                   # Swift executable: headless agent CLI / resident daemon (main.swift, CLIMemoryStore.swift)
   KaozJSTestC/            # C side of the engine demo host (consumer host-function pattern)

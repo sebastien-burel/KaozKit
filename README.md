@@ -156,7 +156,7 @@ Every provider conforms to `LLMProvider` (a streaming `chat(messages:tools:)`).
 
 Tools conform to `Tool` and register in a `ToolRegistry`. Read tools are safe by default; actuation is opt-in and confined.
 
-- **Read:** `ReadFileTool`, `ListDirectoryTool`, `GrepFilesTool` (each confined to `AuthorizedRoot` folders), `CurrentLocationTool`, memory tools; JS tools `current_datetime`, `fetch_url`, `web_search` (Brave).
+- **Read:** `ReadFileTool`, `ListDirectoryTool`, `GrepFilesTool` (each confined to `AuthorizedRoot` folders), `CurrentLocationTool`, memory tools; JS tools `current_datetime`, `fetch_url`, `web_search` (Brave), `news_search` (NewsAPI).
 - **Actuation (opt-in):** `WriteFileTool` / `EditFileTool` (confined to explicitly authorized write roots — a separate grant from read access), `ShellTool` (a fixed working directory), `HTTPRequestTool` (optional host allow-list).
 - **Email:** `SendEmailTool` / `ReadEmailTool` over local IMAP/SMTP (Proton Bridge).
 - **Plugins:** `HTTPPluginTool` builds tools from a declarative `PluginManifest` + `PluginSecrets` — point it at any REST API with a JSON manifest, no code.
