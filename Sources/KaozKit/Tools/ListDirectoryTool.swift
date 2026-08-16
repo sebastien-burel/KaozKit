@@ -17,8 +17,15 @@ public struct ListDirectoryTool: Tool {
         folders. Call without a path to discover the authorised root folders
         and their absolute paths; then call with an absolute path to inspect a
         directory. Set recursive to true to get the whole subtree in one call
-        (paths are shown relative to the listed directory) instead of having to
+        (names are relative to the listed directory) instead of having to
         descend folder by folder. Read-only.
+
+        Returns JSON. With no path: {"roots":[{"name","path"}]}. With a path:
+        {"path","entries":[{"name","type":"file"|"directory","bytes"}],
+        "truncated"}. Every name is a real filename read from disk: quote them
+        exactly as given. Never translate, rename, correct or infer a filename,
+        and never describe a file that is not in entries — if a name looks
+        unclear or unexpected, report it as-is and say so.
         """,
         inputSchemaJSON: """
         {
@@ -68,26 +75,49 @@ public struct ListDirectoryTool: Tool {
         }
     }
 
+    /// Serialises to JSON rather than a hand-rolled table. A model copying a
+    /// filename out of `name\t123 o` has nothing marking it as data to quote
+    /// verbatim, and one was observed inventing plausible French invoice names
+    /// for entries it did not recognise while keeping their exact sizes — the
+    /// correct figures made the fabricated names look trustworthy. JSON gives
+    /// each name its own labelled field, and lets the type be stated instead of
+    /// implied by a trailing slash.
+    private static func json(_ object: Any) -> String {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: object,
+                options: [.sortedKeys, .withoutEscapingSlashes]),
+            let text = String(data: data, encoding: .utf8)
+        else { return #"{"error":"could not encode listing"}"# }
+        return text
+    }
+
+    private static func entry(name: String, values: URLResourceValues?) -> [String: Any] {
+        if values?.isDirectory == true {
+            return ["name": name, "type": "directory"]
+        }
+        return ["name": name, "type": "file", "bytes": values?.fileSize ?? 0]
+    }
+
     private static func listShallow(_ url: URL, fm: FileManager) throws -> String {
         let entries = try fm.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
         )
-        if entries.isEmpty { return "(dossier vide)" }
 
-        let lines = entries
+        let listed = entries
             .sorted { $0.lastPathComponent.localizedCompare($1.lastPathComponent) == .orderedAscending }
             .prefix(maxEntries)
-            .map { entry -> String in
-                let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-                if values?.isDirectory == true {
-                    return "\(entry.lastPathComponent)/"
-                }
-                return "\(entry.lastPathComponent)\t\(values?.fileSize ?? 0) o"
+            .map { url -> [String: Any] in
+                entry(name: url.lastPathComponent,
+                      values: try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey]))
             }
-        let suffix = entries.count > maxEntries ? "\n… (\(entries.count - maxEntries) de plus)" : ""
-        return lines.joined(separator: "\n") + suffix
+        return json([
+            "path": url.path,
+            "entries": Array(listed),
+            "truncated": entries.count > maxEntries,
+        ])
     }
 
     /// Walks the subtree once and returns paths relative to `base`, so the
@@ -100,33 +130,36 @@ public struct ListDirectoryTool: Tool {
         ) else { return "(dossier vide)" }
 
         let basePath = base.path
-        var lines: [String] = []
+        var listed: [[String: Any]] = []
         var truncated = false
-        for case let entry as URL in enumerator {
-            if lines.count >= maxEntries { truncated = true; break }
-            let values = try? entry.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-            var relative = entry.path
+        for case let url as URL in enumerator {
+            if listed.count >= maxEntries { truncated = true; break }
+            var relative = url.path
             if relative.hasPrefix(basePath) {
                 relative = String(relative.dropFirst(basePath.count))
                     .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
             }
-            if values?.isDirectory == true {
-                lines.append("\(relative)/")
-            } else {
-                lines.append("\(relative)\t\(values?.fileSize ?? 0) o")
-            }
+            listed.append(entry(
+                name: relative,
+                values: try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])))
         }
-        if lines.isEmpty { return "(dossier vide)" }
-        lines.sort()
-        return lines.joined(separator: "\n") + (truncated ? "\n… (résultat limité à \(maxEntries) entrées)" : "")
+        listed.sort { ($0["name"] as? String ?? "") < ($1["name"] as? String ?? "") }
+        return json([
+            "path": basePath,
+            "entries": listed,
+            "truncated": truncated,
+        ])
     }
 
     private func listRoots() -> String {
-        guard !roots.isEmpty else {
-            return "Aucun dossier autorisé. L'utilisateur peut en ajouter dans les réglages."
+        var payload: [String: Any] = [
+            "roots": roots.map { ["name": $0.name, "path": $0.url.path] },
+        ]
+        // Keep the actionable hint the plain-text version carried: with no root
+        // the model would otherwise just see an empty list and guess.
+        if roots.isEmpty {
+            payload["note"] = "No folder is authorised yet. The user can add one in settings."
         }
-        return "Dossiers autorisés :\n" + roots
-            .map { "\($0.name)\t\($0.url.path)" }
-            .joined(separator: "\n")
+        return Self.json(payload)
     }
 }
