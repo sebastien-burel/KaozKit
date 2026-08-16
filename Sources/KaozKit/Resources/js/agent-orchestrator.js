@@ -13,7 +13,15 @@
 // imported by absolute bundle path before any root is registered, and the roots
 // are cleared between runs. A relative specifier inside the trusted bundle
 // prefix is immune to both.
-import { llm, provider, providers, __configure } from "./host.js";
+import {
+  llm, provider, providers, __configure,
+  __dispatchTick, __forgetTicks, __installStandardGlobals,
+} from "./host.js";
+
+// Before any agent module evaluates — this one is imported first, and a module
+// body runs once. An agent (or a library it pulls in) can therefore rely on
+// setTimeout and console without knowing which host it runs under.
+__installStandardGlobals(globalThis);
 
 let agent = null;
 let agentReady = null;
@@ -56,12 +64,23 @@ export function deliver(params) {
       let fn;
       if (kind === "message") fn = typeof a === "function" ? a : a.onMessage || a.run;
       else if (kind === "event") fn = a.onEvent;
-      else if (kind === "tick") fn = a.onTick;
+      // A tick armed with a callback is answered here, and the agent never
+      // needs an onTick — it cannot forget to route what it never receives.
+      // Only the payload form falls through to the agent.
+      else if (kind === "tick") {
+        if (__dispatchTick(input)) return null;
+        fn = a.onTick;
+      }
       // The host delivers `restore` once, after reviving a snapshotted heap, so
       // the agent can re-arm what the heap cannot carry (timers live in Swift).
       // Handling it is optional: an agent with nothing to re-arm must not see
       // its resurrection reported as a failed delivery.
-      else if (kind === "restore") fn = a.onRestore || (() => null);
+      else if (kind === "restore") {
+        // The callbacks came back with the heap; their Swift timers did not.
+        // Dropped here so no agent has to remember to do it.
+        __forgetTicks();
+        fn = a.onRestore || (() => null);
+      }
       if (typeof fn !== "function")
         throw new Error("l'agent n'a pas de handler pour '" + kind + "'");
       return fn.call(a, input);

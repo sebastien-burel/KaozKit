@@ -19,11 +19,104 @@ export function usage() { return native.usage(); }
 
 // --- Self-scheduling --------------------------------------------------------
 // `schedule` fires once, `every` repeats; both return a handle for `cancel`.
-// A tick is delivered to the agent's onTick handler.
+//
+// TWO CALLING CONVENTIONS, and the difference matters:
+//
+//   schedule(ms, () => …)      the callback is invoked. Nothing else to write.
+//   schedule(ms, { … })        a tick carrying that payload is delivered to the
+//                              agent's onTick — the original convention, kept
+//                              for agents written against it.
+//
+// The payload form makes arming and handling two separate obligations: whoever
+// arms a timer must also make sure the agent has an onTick that routes the
+// payload back. Forget it and no timer ever fires, with no error anywhere. The
+// callback form removes the second obligation entirely, so it cannot be
+// forgotten — that is the whole point of it.
+//
+// The id → callback table lives here rather than in the caller, because the
+// round trip through Swift is JSON: a function cannot be the payload, so
+// something must hold it. This module already is "the one place", and it is
+// loaded before any agent module.
 
-export function schedule(delayMs, payload) { return native.schedule(delayMs, payload); }
-export function every(intervalMs, payload) { return native.every(intervalMs, payload); }
-export function cancel(handle) { return native.cancel(handle); }
+const pending = new Map();     // tick id → { fn, repeating }
+let nextTick = 0;
+
+/// A handle of 0 means the host did not arm anything — `schedule` is inert
+/// outside resident mode. Returning it would hand back a timer that silently
+/// never fires, which is the failure this file is trying to abolish.
+function armed(handle, delayMs) {
+  if (handle) return handle;
+  throw new Error(
+    "aucun timer armé (" + delayMs + " ms) : host.schedule est inerte hors mode "
+    + "résident — lancer kaoz avec --resident");
+}
+
+function arm(native_fn, delayMs, fnOrPayload, repeating) {
+  if (typeof fnOrPayload !== "function") return armed(native_fn(delayMs, fnOrPayload), delayMs);
+  const id = ++nextTick;
+  // `armed` lève avant qu'on ne garnisse la table : rien à oublier ensuite.
+  const handle = armed(native_fn(delayMs, { __kaozTick: id }), delayMs);
+  pending.set(id, { fn: fnOrPayload, handle, repeating });
+  return handle;
+}
+
+export function schedule(delayMs, fnOrPayload) {
+  return arm(native.schedule, delayMs, fnOrPayload, false);
+}
+export function every(intervalMs, fnOrPayload) {
+  return arm(native.every, intervalMs, fnOrPayload, true);
+}
+export function cancel(handle) {
+  for (const [id, entry] of pending) {
+    if (entry.handle === handle) { pending.delete(id); break; }
+  }
+  return native.cancel(handle);
+}
+
+/// Called by the orchestrator on every tick, BEFORE the agent's onTick.
+/// → true when this tick belonged to a callback armed here, and is now spent.
+export function __dispatchTick(payload) {
+  const id = payload && payload.__kaozTick;
+  if (id === undefined) return false;
+  const entry = pending.get(id);
+  if (!entry) return true;                    // annulé entre-temps : rien à faire
+  if (!entry.repeating) pending.delete(id);
+  entry.fn();
+  return true;
+}
+
+/// Called by the orchestrator after a heap is revived. The closures came back
+/// with the heap; the Swift timers they belonged to did not. Keeping them would
+/// leave callbacks that can never fire, and a table that only grows.
+export function __forgetTicks() {
+  pending.clear();
+}
+
+/// The standard globals XS does not provide, written on top of the callback
+/// form above. Installed by the orchestrator before any agent module evaluates.
+///
+/// Why bother: code that only needs a delay or a log line should not have to
+/// know it is running under this host. `setTimeout` and `console` are ordinary
+/// JavaScript, so a library can depend on them and stay portable — whereas
+/// naming `host.*` ties it to KaozKit forever.
+///
+/// These are plain closures, not host functions: the heap serialiser keeps them
+/// and the `.xsb` reader has nothing to refuse. The timers behind them still do
+/// not survive a restore — nothing can change that — so anything that must
+/// outlive a snapshot has to re-arm from its own declarative state.
+export function __installStandardGlobals(global) {
+  const g = global || globalThis;
+  if (typeof g.setTimeout !== "function") {
+    g.setTimeout = (fn, ms) => schedule(ms || 0, fn);
+    g.clearTimeout = (handle) => { if (handle) cancel(handle); };
+    g.setInterval = (fn, ms) => every(ms || 0, fn);
+    g.clearInterval = (handle) => { if (handle) cancel(handle); };
+  }
+  if (typeof g.console !== "object" || g.console === null) {
+    const write = (...args) => native.log(...args);
+    g.console = { log: write, warn: write, error: write, info: write, debug: write };
+  }
+}
 
 // --- Checkpoint and restore --------------------------------------------------
 // A heap cannot be written while a handler runs — the JS stack is live and the
