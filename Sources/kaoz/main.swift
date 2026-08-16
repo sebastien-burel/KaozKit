@@ -63,6 +63,10 @@ let resident = popBool("--resident")
 // on start (if it exists), snapshot back to it on exit. Implies a non-threaded
 // engine (snapshot-capable).
 let statePath = popFlag("--state")
+// Checkpoint after every settled delivery, not only on exit — the safety net for
+// a daemon that dies without a signal (kill -9, OOM, power). An agent that calls
+// host.snapshot() picks its own moments and does not need this.
+let stateAuto = popBool("--state-auto")
 // Daemon: after the initial --input message, stay alive so the agent's own
 // scheduled ticks (host.schedule/every) keep firing. Still reads stdin for more
 // messages in the background. Runs until killed (Ctrl-C).
@@ -111,9 +115,10 @@ let persona = popFlag("--persona").flatMap {
 let httpHosts = popFlagAll("--http-host")
 let allowHTTP = popBool("--allow-http") || !httpHosts.isEmpty
 let webhookPort = popFlag("--webhook").flatMap { UInt16($0) }
-// Email (Proton Bridge by default): `--email` enables send_email/read_email
-// over local IMAP/SMTP. Credentials from env (the Bridge shows them):
-// PROTON_BRIDGE_USER / _PASS / _FROM (+ optional _HOST / _SMTP_PORT / _IMAP_PORT).
+// Email: `--email` enables send_email/read_email. Credentials from env —
+// SMTP_HOST / _PORT / _USER / _PASS / _FROM / _TLS for a real mail server, or
+// PROTON_BRIDGE_* for a local Proton Bridge (the default when SMTP_HOST is
+// unset). MAIL_TO sets the default recipients, MAIL_ALLOWED_TO confines them.
 let allowEmail = popBool("--email")
 
 // Dev harness for the native __http primitive + XMLHttpRequest shim (C1): runs
@@ -135,7 +140,7 @@ guard let scriptPath = args.first else {
     die("""
         usage: kaoz <agent.js> [--provider anthropic|local] [--model M] \
         [--input JSON] [--library DIR] [--timeout SEC] [--root DIR ...] \
-        [--modules nom=dir ...] [--resident [--daemon] [--state FILE]] \
+        [--modules nom=dir ...] [--resident [--daemon] [--state FILE [--state-auto]]] \
         [--allow-write DIR ...] [--allow-shell [--shell-dir DIR]] \
         [--allow-http [--http-host H ...]] [--webhook PORT] [--budget TOKENS] \
         [--email] [--persona FILE]
@@ -308,17 +313,41 @@ if allowHTTP {
     tools.append(HTTPRequestTool(allowedHosts: httpHosts.isEmpty ? nil : httpHosts))
 }
 if allowEmail {
+    // Two shapes, one config. SMTP_HOST selects a real mail server (defaults
+    // 587 / STARTTLS); without it we keep the Proton Bridge defaults this flag
+    // was born with. SMTP_* wins wherever both are set.
+    let generic = env["SMTP_HOST"] != nil
+    func mail(_ smtp: String, _ proton: String) -> String? {
+        env["SMTP_\(smtp)"] ?? env["PROTON_BRIDGE_\(proton)"]
+    }
+    let addresses: (String) -> [String] = { key in
+        (env[key] ?? "").split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+    let user = mail("USER", "USER") ?? ""
+    // Both spellings are in the wild, and an env that already works elsewhere
+    // should work here untouched.
+    let password = env["SMTP_PASSWORD"] ?? mail("PASS", "PASS") ?? ""
     let emailConfig = EmailConfig(
-        host: env["PROTON_BRIDGE_HOST"] ?? "127.0.0.1",
-        smtpPort: Int(env["PROTON_BRIDGE_SMTP_PORT"] ?? "") ?? 1025,
-        imapPort: Int(env["PROTON_BRIDGE_IMAP_PORT"] ?? "") ?? 1143,
-        username: env["PROTON_BRIDGE_USER"] ?? "",
-        password: env["PROTON_BRIDGE_PASS"] ?? "",
-        fromAddress: env["PROTON_BRIDGE_FROM"] ?? env["PROTON_BRIDGE_USER"] ?? "",
-        // Proton Bridge: SMTP = implicit TLS (ssl), IMAP = STARTTLS. Override each
-        // with PROTON_BRIDGE_SMTP_TLS / _IMAP_TLS = ssl | starttls | none.
-        smtpTLS: EmailConfig.TLSMode(rawValue: env["PROTON_BRIDGE_SMTP_TLS"] ?? "ssl") ?? .ssl,
-        imapTLS: EmailConfig.TLSMode(rawValue: env["PROTON_BRIDGE_IMAP_TLS"] ?? "starttls") ?? .starttls)
+        host: mail("HOST", "HOST") ?? "127.0.0.1",
+        smtpPort: Int(mail("PORT", "SMTP_PORT") ?? "") ?? (generic ? 587 : 1025),
+        imapPort: Int(mail("IMAP_PORT", "IMAP_PORT") ?? "") ?? (generic ? 993 : 1143),
+        username: user,
+        password: password,
+        // EMAIL_FROM / EMAIL_TO are what a Python pipeline already exports; same
+        // reasoning as the password above — don't make a working env move.
+        fromAddress: mail("FROM", "FROM") ?? env["EMAIL_FROM"] ?? user,
+        // Proton Bridge: SMTP = implicit TLS (ssl), IMAP = STARTTLS. A real server
+        // usually wants STARTTLS on 587 and implicit TLS on 993. Override with
+        // SMTP_TLS / SMTP_IMAP_TLS = ssl | starttls | none.
+        smtpTLS: EmailConfig.TLSMode(
+            rawValue: mail("TLS", "SMTP_TLS") ?? (generic ? "starttls" : "ssl")) ?? .ssl,
+        imapTLS: EmailConfig.TLSMode(
+            rawValue: mail("IMAP_TLS", "IMAP_TLS") ?? (generic ? "ssl" : "starttls")) ?? .starttls,
+        // Who the agent writes to. MAIL_TO is the audience when it names none;
+        // MAIL_ALLOWED_TO (`@domain.tld` allowed) bounds what it may name at all.
+        defaultTo: addresses("MAIL_TO").isEmpty ? addresses("EMAIL_TO") : addresses("MAIL_TO"),
+        allowedTo: addresses("MAIL_ALLOWED_TO"))
     tools.append(SendEmailTool(config: emailConfig))
     tools.append(ReadEmailTool(config: emailConfig))
 }
@@ -442,11 +471,22 @@ if resident {
             while agent.pendingCount > 0, Date() < deadline { usleep(20_000) }
         }
         do {
-            try agent.writeSnapshot().write(to: URL(fileURLWithPath: snapshotPath))
+            try agent.writeSnapshot().write(
+                to: URL(fileURLWithPath: snapshotPath), options: .atomic)
         } catch {
             FileHandle.standardError.write(
                 Data("snapshot failed: \(error.localizedDescription)\n".utf8))
         }
+    }
+
+    // Checkpoints the agent asks for (host.snapshot), plus every delivery under
+    // --state-auto. Atomic: a crash mid-write must not shred the state file we
+    // are here to protect.
+    if let snapshotPath {
+        agent.snapshotSink = { data in
+            try data.write(to: URL(fileURLWithPath: snapshotPath), options: .atomic)
+        }
+        agent.checkpointEveryDelivery = stateAuto
     }
 
     // A daemon ends by signal, not by EOF: catch SIGINT/SIGTERM so the snapshot
@@ -514,6 +554,24 @@ if resident {
         return t.data(using: .utf8).flatMap {
             try? JSONSerialization.jsonObject(with: $0, options: [.fragmentsAllowed])
         } ?? t
+    }
+
+    // Coming back from a snapshot, the agent's timers are gone — they lived in the
+    // previous process, not in the heap — and no module body re-evaluates to
+    // notice. Hand it the `restore` event so it can re-arm from its own state,
+    // before any real message: awaited here rather than fired from the host's
+    // init, so it cannot lose the race against the first stdin line.
+    do {
+        if let resumed = try await agent.resumeFromSnapshot(timeout: timeout) {
+            // "null" is the agent declining to handle it — worth no detail, but
+            // the operator still wants to know the heap came from disk.
+            let detail = (resumed == "null") ? "" : " — \(resumed)"
+            FileHandle.standardError.write(
+                Data("[daemon] restored from snapshot\(detail)\n".utf8))
+        }
+    } catch {
+        FileHandle.standardError.write(
+            Data("[daemon] restore handler failed: \(error.localizedDescription)\n".utf8))
     }
 
     if daemon || webhookServer != nil {
