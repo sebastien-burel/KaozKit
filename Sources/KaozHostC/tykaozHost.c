@@ -37,6 +37,7 @@ extern uint32_t xsbTySchedule(void* bridge, double delayMs, int repeating, const
 extern void xsbTyCancel(void* bridge, uint32_t handle);
 extern void xsbTyMemorySearch(void* bridge, uint32_t id, const char* json);
 extern void xsbTyUsage(void* bridge, double* prompt, double* completion, double* calls);
+extern int xsbTySnapshot(void* bridge, const char* reason);
 
 /* JSON.stringify([xsArg(0..n-1)]) as a malloc'd string — the positional params
  * array Swift expects (AgentJSON.params). Uses xsResult as scratch, so call it
@@ -210,6 +211,20 @@ static void xs_ty_usage(xsMachine* the)
     xsSet(xsResult, xsID("chatCalls"), xsNumber(calls));
 }
 
+/* host.snapshot(reason?) — ask the host for a checkpoint. The heap cannot be
+ * written from here: this runs inside a live host frame, and fxWriteSnapshot
+ * serializes the whole XS stack (those slots would come back as dead roots).
+ * So this only records the request; the host writes as soon as the current
+ * delivery has settled and the stack has unwound. Returns true when the host
+ * knows how to persist, false otherwise (one-shot run, or `kaoz` without
+ * --state). Synchronous on purpose — an async variant's own promise would keep
+ * the pending count above zero and block the very write it asks for. */
+static void xs_ty_snapshot(xsMachine* the)
+{
+    const char* reason = (xsToInteger(xsArgc) > 0) ? xsToString(xsArg(0)) : "";
+    xsResult = xsBoolean(xsbTySnapshot(xsGetContext(the), reason));
+}
+
 /* Frozen, append-only host table for snapshot callback projection. */
 static const XSBridgeHostFn gTyHostTable[] = {
     { "log", xs_ty_log },
@@ -228,6 +243,7 @@ static const XSBridgeHostFn gTyHostTable[] = {
     { "cancel", xs_ty_cancel },
     { "memory.search", xs_ty_memory_search },
     { "usage", xs_ty_usage },
+    { "snapshot", xs_ty_snapshot },
 };
 
 static void ty_register(void)
@@ -266,6 +282,8 @@ void xsBridgeTyKaozInstall(void* machine)
             xsSet(xsVar(0), xsID("cancel"), xsVar(2));
             xsVar(2) = xsNewHostFunction(xs_ty_usage, 0);
             xsSet(xsVar(0), xsID("usage"), xsVar(2));
+            xsVar(2) = xsNewHostFunction(xs_ty_snapshot, 1);
+            xsSet(xsVar(0), xsID("snapshot"), xsVar(2));
 
             xsVar(1) = xsNewObject();
             xsSet(xsVar(0), xsID("tool"), xsVar(1));

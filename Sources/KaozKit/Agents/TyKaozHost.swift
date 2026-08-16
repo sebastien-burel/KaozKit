@@ -72,6 +72,11 @@ public nonisolated final class TyKaozHost {
     /// later delivers a `tick`. Returns a cancel handle. `onCancel` disarms it.
     public nonisolated(unsafe) var onSchedule: ((_ delayMs: Double, _ repeating: Bool, _ payloadJSON: String) -> UInt32)?
     public nonisolated(unsafe) var onCancel: ((UInt32) -> Void)?
+    /// Checkpoint request (`host.snapshot`): JS asks for the heap to be written.
+    /// The write itself cannot happen here (the JS stack is live), so this only
+    /// records the ask; the host honours it once the delivery has settled.
+    /// Returns whether this host can persist at all — that is what JS sees.
+    public nonisolated(unsafe) var onSnapshotRequest: ((_ reason: String) -> Bool)?
 
     public init(
         makeProvider: @escaping @Sendable () -> (any LLMProvider)?,
@@ -342,7 +347,7 @@ extension XSEngine {
         // otherwise surface much later as a delivery that never settles. The
         // module sets this marker as its last act, so its absence here is a loud,
         // immediate failure instead.
-        guard (try? engine.eval("globalThis.__kaozOrchestrator ?? 0")) == "2" else { return nil }
+        guard (try? engine.eval("globalThis.__kaozOrchestrator ?? 0")) == "3" else { return nil }
         return engine
     }
 }
@@ -457,6 +462,14 @@ public func xsbTySchedule(
 public func xsbTyCancel(_ bridge: UnsafeMutableRawPointer?, _ handle: UInt32) {
     guard let bridge, let host = tyHost(bridge) else { return }
     host.onCancel?(handle)
+}
+
+@_cdecl("xsbTySnapshot")
+public func xsbTySnapshot(
+    _ bridge: UnsafeMutableRawPointer?, _ reason: UnsafePointer<CChar>?
+) -> Int32 {
+    guard let bridge, let host = tyHost(bridge) else { return 0 }
+    return (host.onSnapshotRequest?(string(reason)) ?? false) ? 1 : 0
 }
 
 @_cdecl("xsbTyMemorySearch")

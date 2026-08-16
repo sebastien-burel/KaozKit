@@ -34,6 +34,25 @@ public nonisolated final class AgentHost: @unchecked Sendable {
     private var timers: [UInt32: DispatchSourceTimer] = [:]
     private var nextTimerHandle: UInt32 = 1
 
+    // Checkpointing (host.snapshot / checkpointEveryDelivery). The heap can only
+    // be written between deliveries — never from inside one — so a request is
+    // recorded here and honoured once the delivery that made it has settled.
+
+    /// Where a checkpoint goes. Nil means this host does not persist: JS gets
+    /// `false` from `host.snapshot()` and nothing is ever written.
+    public var snapshotSink: (@Sendable (Data) throws -> Void)?
+    /// Checkpoint after *every* settled delivery, without JS asking. A tick is a
+    /// delivery, so this also covers work driven by `host.every`.
+    public var checkpointEveryDelivery = false
+    /// How long a checkpoint waits for in-flight host calls to settle before
+    /// giving up (a snapshot needs `pendingCount == 0`).
+    public var checkpointSettleTimeout: TimeInterval = 30
+    private var checkpointRequested = false          // guarded by `lock`
+    private let checkpointQueue = DispatchQueue(label: "kaoz.agent.checkpoint")
+    /// True when this host was revived from a snapshot whose heap can route a
+    /// `restore` delivery — see `resumeFromSnapshot`.
+    private var restoreInfo: [String: Any]?
+
     /// One in-flight delivery: its awaiting continuation + optional timeout item.
     private struct Delivery {
         let cont: CheckedContinuation<String, Error>
@@ -131,9 +150,46 @@ public nonisolated final class AgentHost: @unchecked Sendable {
         // orchestrator and its state. Which generation, though, decides how this
         // host may drive it — the marker is set by the orchestrator's last line.
         let generation = (try? engine.eval("globalThis.__kaozOrchestrator ?? 0")) ?? "0"
-        self.legacyHeap = (generation != "2")
+        self.legacyHeap = !(generation == "2" || generation == "3")
         self.orchestrator = self.legacyHeap ? nil : JSResource.path("agent-orchestrator")
+
+        // Nothing in the heap says it was frozen: no module body re-evaluates, so
+        // JS cannot notice the restart on its own. Say it explicitly. The counter
+        // lives IN the heap, so it keeps counting across successive restores.
+        let at = Date().timeIntervalSince1970 * 1000
+        let count = (try? engine.eval("""
+            globalThis.__kaozRestore = \
+            { count: ((globalThis.__kaozRestore && globalThis.__kaozRestore.count) || 0) + 1, \
+              at: \(at) }, globalThis.__kaozRestore.count
+            """)) ?? "1"
+
+        // Timer handles the restored heap still holds name timers that died with
+        // the previous process. Start this host's handles past them, or a stale
+        // `host.cancel(oldHandle)` would disarm an unrelated new timer. The base
+        // rides in the heap, so it stays disjoint across restores too.
+        let base = (try? engine.eval(
+            "globalThis.__kaozTimerBase = ((globalThis.__kaozTimerBase) || 0) + 0x10000")) ?? ""
+        self.nextTimerHandle = UInt32(base) ?? 1
+
+        // Only a generation-3 heap can route the `restore` delivery; an older one
+        // has an orchestrator frozen without that branch.
+        if generation == "3" {
+            self.restoreInfo = ["count": Int(count) ?? 1, "at": at]
+        }
         wireDelivery()
+    }
+
+    /// Deliver the one-off `restore` event to a revived agent (its `onRestore`),
+    /// so it can re-arm what a snapshot cannot carry — timers above all, which
+    /// live in Swift and die with the process. Call it once, before the first real
+    /// delivery. Returns the handler's JSON result, or nil when there is nothing
+    /// to resume: a host built fresh, or a heap of a generation that cannot route
+    /// the event.
+    @discardableResult
+    public func resumeFromSnapshot(timeout: TimeInterval? = nil) async throws -> String? {
+        guard let info = restoreInfo else { return nil }
+        restoreInfo = nil
+        return try await deliver(kind: "restore", payload: info, timeout: timeout)
     }
 
     /// Fresh TyKaozHost + (idempotent) sub-agent factory registration.
@@ -175,6 +231,61 @@ public nonisolated final class AgentHost: @unchecked Sendable {
             self?.arm(delayMs: delayMs, repeating: repeating, payloadJSON: payloadJSON) ?? 0
         }
         host.onCancel = { [weak self] handle in self?.disarm(handle) }
+        host.onSnapshotRequest = { [weak self] _ in
+            guard let self, self.snapshotSink != nil else { return false }
+            self.lock.lock()
+            self.checkpointRequested = true
+            self.lock.unlock()
+            return true
+        }
+    }
+
+    // MARK: - Checkpointing
+
+    /// Honour a pending checkpoint request, if any. Called after every delivery
+    /// settles — the earliest moment the heap is writable, since the JS stack has
+    /// unwound by then.
+    private func scheduleCheckpointIfNeeded() {
+        lock.lock()
+        let due = (checkpointRequested || checkpointEveryDelivery) && !closed && snapshotSink != nil
+        checkpointRequested = false
+        lock.unlock()
+        guard due else { return }
+        // Serial queue: overlapping deliveries must not race two writes, and a
+        // write must never run on the XS thread (see `performCheckpoint`).
+        checkpointQueue.async { [weak self] in self?.performCheckpoint() }
+    }
+
+    /// Write the heap and hand the bytes to `snapshotSink`. Runs off the engine
+    /// thread on purpose: `writeSnapshot` marshals in via the run loop, which only
+    /// turns between JS frames, so the heap cannot be mutated mid-write.
+    private func performCheckpoint() {
+        guard let sink = snapshotSink else { return }
+        // A snapshot needs idle: in-flight host calls (an LLM turn, a tool) are
+        // parked in Swift, off the heap, and would restore as promises no one can
+        // settle. Another delivery may have started meanwhile — let it land.
+        let deadline = Date().addingTimeInterval(checkpointSettleTimeout)
+        while engine.pendingCount > 0, Date() < deadline { usleep(20_000) }
+        let at = Date().timeIntervalSince1970 * 1000
+        do {
+            let data = try engine.writeSnapshot()
+            try sink(data)
+            note(ok: true, bytes: data.count, at: at, error: nil)
+        } catch {
+            host.log("snapshot: \(error.localizedDescription)")
+            note(ok: false, bytes: 0, at: at, error: error.localizedDescription)
+        }
+    }
+
+    /// Publish the outcome to JS (`host.lastSnapshot()`). Written *after* the
+    /// heap is frozen, so it describes this process — the restored heap will
+    /// carry the record of the checkpoint before the one that revived it, which
+    /// is the honest reading.
+    private func note(ok: Bool, bytes: Int, at: Double, error: String?) {
+        let payload = AgentJSON.string([
+            "ok": ok, "bytes": bytes, "at": at, "error": error ?? NSNull(),
+        ])
+        _ = try? engine.eval("globalThis.__kaozSnapshot = \(payload)")
     }
 
     /// Arm a timer that delivers a `tick` (the payload) after / every `delayMs`.
@@ -232,6 +343,9 @@ public nonisolated final class AgentHost: @unchecked Sendable {
             let v = nextId; nextId &+= 1; return v
         }()
         let inputJSON = AgentJSON.string(payload ?? NSNull())
+        // Runs on the throwing paths too (timeout, script error): a checkpoint the
+        // agent asked for before it failed is still worth taking.
+        defer { scheduleCheckpointIfNeeded() }
         return try await withCheckedThrowingContinuation { cont in
             let timeoutItem = timeout.map { _ in
                 DispatchWorkItem { [weak self] in
@@ -297,6 +411,7 @@ public nonisolated final class AgentHost: @unchecked Sendable {
         host.onDeliverResult = nil
         host.onSchedule = nil
         host.onCancel = nil
+        host.onSnapshotRequest = nil
         let engine = self.engine
         DispatchQueue.global().async {
             engine.runUntilIdle(timeout: 2)

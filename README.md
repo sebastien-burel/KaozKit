@@ -82,9 +82,28 @@ An agent module exports `run(input)` (or `default`). Its return value comes back
 | `host.memory.save(title, content)` / `.read(id)` / `.list()` / `.search(query, limit?)` | Persistent notes; `search` ranks by embedding similarity. |
 | `host.schedule(ms, payload?)` / `host.every(ms, payload?)` / `host.cancel(handle)` | Self-scheduling: deliver a `tick` to the agent's `onTick` after / every `ms` (resident mode). |
 | `host.usage()` | Cumulative `{ promptTokens, completionTokens, chatCalls }` for the run. |
+| `host.snapshot(reason?)` | Ask for a checkpoint of the whole heap. Returns `false` if this host doesn't persist. |
 | `host.log(…args)` | Log to the host. |
 
-`messages` are `{ role, content }` objects (`role`: `system` / `user` / `assistant`); `tools` is an array of registered tool **names**. A **resident** agent instead exports an object of handlers — `{ onMessage, onEvent, onTick }` — and its JS heap (state, conversation) survives across deliveries.
+`messages` are `{ role, content }` objects (`role`: `system` / `user` / `assistant`); `tools` is an array of registered tool **names**. A **resident** agent instead exports an object of handlers — `{ onMessage, onEvent, onTick, onRestore }` — and its JS heap (state, conversation) survives across deliveries.
+
+### Checkpoint and restore (resident)
+
+A snapshot cannot be taken *during* a delivery: the JS stack is live and host calls may be in flight. `host.snapshot()` is therefore a **request** — the host writes as soon as the current delivery has settled. Ask for it at a point you'd be happy to wake up at:
+
+```js
+onTick() { this.work(); host.snapshot("cycle done"); }
+```
+
+Coming back is the mirror image. The heap returns intact, but **timers do not**: they live in Swift and die with the process, and no module body re-evaluates to notice. So the host delivers one `restore` event to the revived agent, which re-arms from its own state — never from a stored handle, which now names a dead timer:
+
+```js
+export default {
+  onRestore({ count, at }) { this.armFrom(this.nextRunAt); },   // optional
+};
+```
+
+`restored()` (from `kaoz/host`) returns `{ count, at }` at any time, and `lastSnapshot()` reports the last checkpoint's outcome. `kaoz --state-auto` checkpoints after *every* delivery for agents that would rather not ask. See [`demo/resident-checkpoint.js`](demo/resident-checkpoint.js).
 
 The same capabilities are also **importable as ES modules**, so an agent can name what it uses instead of reaching for an ambient global — both forms work, and resolve to one implementation:
 
@@ -158,7 +177,7 @@ Tools conform to `Tool` and register in a `ToolRegistry`. Read tools are safe by
 
 - **Read:** `ReadFileTool`, `ListDirectoryTool`, `GrepFilesTool` (each confined to `AuthorizedRoot` folders), `CurrentLocationTool`, memory tools; JS tools `current_datetime`, `fetch_url`, `web_search` (Brave), `news_search` (NewsAPI).
 - **Actuation (opt-in):** `WriteFileTool` / `EditFileTool` (confined to explicitly authorized write roots — a separate grant from read access), `ShellTool` (a fixed working directory), `HTTPRequestTool` (optional host allow-list).
-- **Email:** `SendEmailTool` / `ReadEmailTool` over local IMAP/SMTP (Proton Bridge).
+- **Email:** `SendEmailTool` / `ReadEmailTool` over SMTP/IMAP — any server, or a local Proton Bridge. `send_email` takes an optional `html` (sent as `multipart/alternative` with `body` as the text fallback) and `attachments` (`{filename, contentType, base64, cid?}`; a `cid` makes the file inline, referenced from the HTML as `src="cid:NAME"`). Recipients default to `MAIL_TO` and are confined to `MAIL_ALLOWED_TO` when set, so the model can't pick its own audience.
 - **Plugins:** `HTTPPluginTool` builds tools from a declarative `PluginManifest` + `PluginSecrets` — point it at any REST API with a JSON manifest, no code.
 - **Memory:** `SemanticMemoryStore` (embedding-ranked recall) behind the `MemoryStoring` / `MemoryRetrieving` protocols.
 - **Channels:** `WebhookServer` delivers inbound HTTP request bodies to a resident agent and replies with its result.
@@ -174,13 +193,25 @@ Tools conform to `Tool` and register in a `ToolRegistry`. Read tools are safe by
 | `--library DIR` / `--modules nom=dir` | extra module roots (the agent's own dir is always a root; resolution is confined) |
 | `--root DIR` | authorize a folder for the read file-tools |
 | `--allow-write DIR` / `--allow-shell [--shell-dir DIR]` / `--allow-http [--http-host H]` | opt-in actuation |
-| `--email` | enable `send_email` / `read_email` (Proton Bridge) |
+| `--email` | enable `send_email` / `read_email` (SMTP/IMAP, see the env below) |
 | `--persona FILE` / `--budget TOKENS` | base identity prepended to every chat; hard token cap |
-| `--resident [--daemon] [--state FILE]` | keep one engine alive; deliver a JSON message per stdin line; `--daemon` keeps scheduled ticks firing; `--state` snapshots the JS heap across processes |
+| `--resident [--daemon] [--state FILE [--state-auto]]` | keep one engine alive; deliver a JSON message per stdin line; `--daemon` keeps scheduled ticks firing; `--state` snapshots the JS heap across processes (on exit, and whenever the agent calls `host.snapshot()`); `--state-auto` checkpoints after every delivery |
 | `--webhook PORT` | inbound HTTP → resident agent (implies resident + daemon) |
 | `--embed-ollama MODEL` | use a real embedding model for `memory.search` |
 
-Secrets are read from the environment: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MOONSHOT_API_KEY`/`KIMI_API_KEY`, `TYKAOZ_LOCAL_BASE_URL`, `BRAVE_API_KEY` (enables `web_search`), `PROTON_BRIDGE_*` (email), `TYKAOZ_MODEL`, `TYKAOZ_MEMORY_FILE`.
+Secrets are read from the environment: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `MOONSHOT_API_KEY`/`KIMI_API_KEY`, `TYKAOZ_LOCAL_BASE_URL`, `BRAVE_API_KEY` (enables `web_search`), `TYKAOZ_MODEL`, `TYKAOZ_MEMORY_FILE`.
+
+`--email` reads its own set. Setting `SMTP_HOST` selects a real mail server (defaults: port 587, STARTTLS); leave it unset and the defaults target a local **Proton Bridge** under `PROTON_BRIDGE_*` instead. `SMTP_*` wins wherever both are defined.
+
+| Variable | Role |
+| --- | --- |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_TLS` | server, port, and `ssl` \| `starttls` \| `none` |
+| `SMTP_USER` / `SMTP_PASSWORD` (or `SMTP_PASS`) | credentials |
+| `SMTP_FROM` (or `EMAIL_FROM`) | envelope sender (defaults to `SMTP_USER`) |
+| `SMTP_IMAP_PORT` / `SMTP_IMAP_TLS` | `read_email` side (defaults 993 / implicit TLS) |
+| `MAIL_TO` (or `EMAIL_TO`) | recipients used when the agent names none — a newsletter's audience is configuration, not a model's choice |
+| `MAIL_ALLOWED_TO` | comma-separated allowlist bounding what the agent *may* name; an `@domain.tld` entry allows a whole domain. Unset ⇒ unconfined |
+| `PROTON_BRIDGE_HOST` / `_SMTP_PORT` / `_IMAP_PORT` / `_USER` / `_PASS` / `_FROM` / `_SMTP_TLS` / `_IMAP_TLS` | the Proton Bridge equivalents |
 
 ## The engine layer (KaozJS)
 

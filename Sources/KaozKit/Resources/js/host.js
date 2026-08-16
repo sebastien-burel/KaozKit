@@ -25,6 +25,31 @@ export function schedule(delayMs, payload) { return native.schedule(delayMs, pay
 export function every(intervalMs, payload) { return native.every(intervalMs, payload); }
 export function cancel(handle) { return native.cancel(handle); }
 
+// --- Checkpoint and restore --------------------------------------------------
+// A heap cannot be written while a handler runs — the JS stack is live and the
+// engine may have host calls in flight. `snapshot()` is therefore a *request*:
+// the host writes as soon as the current delivery has settled. Ask for it at a
+// point you would be happy to wake up at.
+//
+// `native.snapshot` is feature-detected because a heap restored from a snapshot
+// keeps the module cache it was frozen with, while its `host` object comes from
+// whatever the writing binary installed — an older one has no `snapshot`.
+
+/// Ask the host to checkpoint the heap. Returns false when this host does not
+/// persist at all (a one-shot run, or `kaoz` without `--state`).
+export function snapshot(reason) {
+  return typeof native.snapshot === "function" ? native.snapshot(reason || "") : false;
+}
+
+/// `{ count, at }` when this heap came back from a snapshot, else null. Read off
+/// the global every time: no module body re-evaluates on restore, so a value
+/// captured at import would be forever stale.
+export function restored() { return globalThis.__kaozRestore || null; }
+
+/// Outcome of the last checkpoint: `{ ok, bytes, at, error }`, or null if none
+/// was taken in this process.
+export function lastSnapshot() { return globalThis.__kaozSnapshot || null; }
+
 // --- Tools ------------------------------------------------------------------
 
 export const tool = {

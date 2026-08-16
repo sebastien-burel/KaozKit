@@ -57,6 +57,11 @@ export function deliver(params) {
       if (kind === "message") fn = typeof a === "function" ? a : a.onMessage || a.run;
       else if (kind === "event") fn = a.onEvent;
       else if (kind === "tick") fn = a.onTick;
+      // The host delivers `restore` once, after reviving a snapshotted heap, so
+      // the agent can re-arm what the heap cannot carry (timers live in Swift).
+      // Handling it is optional: an agent with nothing to re-arm must not see
+      // its resurrection reported as a failed delivery.
+      else if (kind === "restore") fn = a.onRestore || (() => null);
       if (typeof fn !== "function")
         throw new Error("l'agent n'a pas de handler pour '" + kind + "'");
       return fn.call(a, input);
@@ -110,4 +115,8 @@ globalThis.__callTool = (name, argsJSON, callId) =>
 // before this module had exports has no such global, which is how AgentHost
 // knows to keep driving it the old way. A global on purpose: a restored heap can
 // only be probed that way.
-globalThis.__kaozOrchestrator = 2;
+//
+// 3 adds the `restore` delivery kind. A generation-2 heap is still driven
+// normally — it just never receives one, since its copy of this module (frozen
+// in the heap, never re-evaluated) cannot route it.
+globalThis.__kaozOrchestrator = 3;

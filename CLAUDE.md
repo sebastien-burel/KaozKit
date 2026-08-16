@@ -79,7 +79,9 @@ fast startup + state persistence across launches. Write requires idle (`pendingC
 in-flight calls settle in Swift, off the heap). The engine references host C functions in
 the heap **by index** into a callback table, so the consumer registers a frozen, append-only
 `XSBridgeRegisterHostTable(name, callback)`; each snapshot carries its ordered name list and
-a restore accepts a prefix-compatible superset (append safe, reorder/removal rejected). Two
+a restore accepts a prefix-compatible superset (append safe, reorder/removal rejected). The
+agent layer's table is `gTyHostTable` (`KaozHostC/tykaozHost.c`): a new host function goes at
+its **end** — `host.snapshot` did — or every `--state` file already on disk stops loading. Two
 build requirements: `mxSnapshot` (defined in `Package.swift`) makes the engine
 snapshot-clean (strings copied into the heap, deterministic chunk layout); and `bridge.c`
 supplements `snapshot->callbacks` with a few engine built-ins this Moddable checkout installs
@@ -255,7 +257,8 @@ Swift as JSON via `host.__report` / `host.__deliverResult`.
 host-function pattern, `xsServicePromise` + `@_cdecl` into `TyKaozHost.swift`): `host.log`,
 `host.__chat` (async LLM turn, streams tokens via `xsServiceEmit`), `host.tool.list`/`call`,
 `host.memory.save`/`read`/`list`/`search`, `host.schedule`/`every`/`cancel` (self-scheduled
-ticks), `host.usage`. `TyKaozHost.swift` holds the `@_cdecl` entry points; each recovers the
+ticks), `host.usage`, `host.snapshot` (checkpoint request — see below). `TyKaozHost.swift`
+holds the `@_cdecl` entry points; each recovers the
 host from the bridge context and settles via `HostReply` (`xsServiceResolve`/`Reject`/`Emit`).
 The ergonomic wrappers — `host.llm.chat`, `host.provider(id)`, `__runAgent`, `__deliver`,
 `__callTool` — are a **JS shim** (`Resources/js/agent-orchestrator.js`, imported as a bundled
@@ -275,6 +278,24 @@ optional `tokenBudget` / `persona`. Sub-agents use the engine's `Thread`/`Servic
 factory registered via `TyKaozThreads.register` builds a child `TyKaozHost` with the same
 wiring.
 
+**Checkpoint & restore (agent-driven).** A snapshot cannot be taken from inside a delivery:
+`fxWriteSnapshot` serializes the whole XS stack (and `the->frame` is never restored), and
+`writeSnapshot()` refuses while `pendingCount != 0`. So `host.snapshot(reason?)` is a
+**synchronous request**, not a write — an async variant would self-block, its own
+`xsServicePromise` holding the pending count above zero. `AgentHost` records the ask and
+honours it after the delivery settles, on a serial queue, through `snapshotSink` (nil ⇒ JS
+gets `false`); `checkpointEveryDelivery` does the same unasked. The write runs *off* the
+engine thread on purpose: `loop.sync` only lands between run-loop turns, so it can never
+interleave with a JS frame. Symmetrically, a restored heap cannot notice its own
+resurrection (no module body re-evaluates), so `init(snapshot:)` stamps `globalThis
+.__kaozRestore = {count, at}` (the counter lives in the heap, so it survives further
+restores) and `resumeFromSnapshot()` delivers one `restore` event → the agent's `onRestore`,
+which re-arms its timers — they lived in `AgentHost.timers`, i.e. in Swift, and died with the
+process. Restored handles are stale, so the restored host starts its own handle counter past
+them (`__kaozTimerBase`, also heap-resident) or a stale `host.cancel` would disarm an
+unrelated timer. The `__kaozOrchestrator` marker is now `3`: a generation-2 heap is still
+driven normally but never receives a `restore`, since its frozen orchestrator can't route it.
+
 **Providers.** All conform to `LLMProvider` (streaming `chat(messages:tools:)` →
 `StreamEvent`). `TyKaozHost.chat` runs the **tool-call loop** (provider → tool → provider, up
 to `maxToolRounds`) off the XS thread on a `@MainActor` task, streaming text back via
@@ -287,7 +308,13 @@ heavy deps.
 
 **Tools & memory.** `Tool` + `ToolRegistry`. Read tools (`ReadFile`/`ListDirectory`/
 `GrepFiles`) are confined to `AuthorizedRoot`s; actuation (`WriteFile`/`EditFile`/`Shell`/
-`HTTPRequest`) is opt-in and separately confined; `EmailTools` speak IMAP/SMTP; `HTTPPluginTool`
+`HTTPRequest`) is opt-in and separately confined; `EmailTools` speak IMAP/SMTP through `curl`
+(`send_email` builds `multipart/alternative` when given `html`, base64 both parts so a long
+HTML line can't break the DATA phase, and RFC 2047-encodes a non-ASCII subject; recipients
+default to `MAIL_TO` and are confined by `MAIL_ALLOWED_TO`, empty ⇒ unconfined). Every value
+reaching a header is stripped of CR/LF (`headerSafe`) and every address must be well-formed
+(`isWellFormed`): the subject is model-written from text the model just read on the web, so a
+newline in it would let a prompt injection append its own `Bcc:`. `HTTPPluginTool`
 builds tools from a declarative `PluginManifest`. `SemanticMemoryStore` ranks notes by
 embedding similarity behind `MemoryStoring`/`MemoryRetrieving`. `WebhookServer` delivers
 inbound HTTP bodies to a resident agent.
@@ -296,7 +323,9 @@ inbound HTTP bodies to a resident agent.
 `--provider`/env secrets to concrete providers via `resolveProvider`, assembles the tool set
 from opt-in flags (`--root`/`--allow-write`/`--allow-shell`/`--allow-http`/`--email`), and
 runs `AgentRuntime.runRooted` (or an `AgentHost` for `--resident`/`--daemon`/`--webhook`,
-with `--state` snapshotting the heap).
+with `--state` snapshotting the heap — atomically, on exit and on each `host.snapshot()`;
+`--state-auto` after every delivery — and calling `resumeFromSnapshot()` before the first
+message when it started from one).
 
 ## Critical invariants (must always hold)
 
