@@ -266,15 +266,28 @@ static int fxPathTrusted(const char* real)
     return trusted;
 }
 
-/* Try `base` verbatim (hasExt) or with each known extension in order; realpath
- * into `out`. Returns 1 (and fills `out`) on the first file that exists. */
+/* Try `base` verbatim (hasExt) or with each known suffix in order; realpath
+ * into `out`. Returns 1 (and fills `out`) on the first file that exists.
+ *
+ * The `/index.*` suffixes let a directory stand for its own entry point, the
+ * way every other JavaScript toolchain resolves a package: `import "pkg"`
+ * finds `.../pkg/index.js`, so a consumer stops having to name the internal
+ * layout of what it imports. KaozKit's other resolver (ModuleResolver.swift)
+ * already tried `/index.js`; the two now agree.
+ *
+ * Order matters: a real `pkg.js` still wins over `pkg/index.js`, so nothing
+ * that resolved before resolves elsewhere now. This only adds candidates
+ * where resolution used to fail outright. */
 static int fxResolveWithExt(const char* base, int hasExt, char* out)
 {
     if (hasExt)
         return c_realpath(base, out) ? 1 : 0;
-    static const char* const exts[] = { ".xsb", ".mjs", ".js" };
+    static const char* const exts[] = {
+        ".xsb", ".mjs", ".js",
+        "/index.xsb", "/index.mjs", "/index.js"
+    };
     char cand[C_PATH_MAX];
-    for (int i = 0; i < 3; i++) {
+    for (unsigned i = 0; i < sizeof(exts) / sizeof(exts[0]); i++) {
         c_strcpy(cand, base);
         c_strcat(cand, exts[i]);
         if (c_realpath(cand, out))
@@ -347,21 +360,34 @@ txID fxFindModule(txMachine* the, txSlot* realm, txID moduleID, txSlot* slot)
         /* Bare specifier — resolve against a named or default root, then
          * confine (a `../` in the remainder can't escape the root set). */
         for (ModuleRoot* r = gModuleRoots; r; r = r->next) {
+            /* NULL = the specifier IS the prefix, with nothing after it:
+             * `import "pkg"` against `--modules pkg=DIR`. The root directory
+             * then stands on its own, and fxResolveWithExt looks for its
+             * `index.*`. Without this a named root could only ever be reached
+             * through a subpath, which forced every consumer to spell out the
+             * internal layout of the package it imports. */
             const char* rest;
             if (r->prefix[0] == 0) {
                 rest = name;
             }
             else {
                 size_t pl = strlen(r->prefix);
-                if (strncmp(name, r->prefix, pl) != 0 || name[pl] != mxSeparator)
+                if (strncmp(name, r->prefix, pl) != 0)
                     continue;
-                rest = name + pl + 1;
+                if (name[pl] == 0)
+                    rest = NULL;
+                else if (name[pl] == mxSeparator)
+                    rest = name + pl + 1;
+                else
+                    continue;                 /* `pkg-autre` n'est pas `pkg` */
             }
             c_strcpy(base, r->dir);
-            size_t bl = strlen(base);
-            base[bl] = mxSeparator;
-            base[bl + 1] = 0;
-            c_strcat(base, rest);
+            if (rest) {
+                size_t bl = strlen(base);
+                base[bl] = mxSeparator;
+                base[bl + 1] = 0;
+                c_strcat(base, rest);
+            }
             if (fxResolveWithExt(base, hasExt, real) && fxModuleAllowed(real)) {
                 fxRootsUnlock();
                 return fxNewNameC(the, real);
