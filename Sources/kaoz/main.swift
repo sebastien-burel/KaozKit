@@ -437,13 +437,26 @@ if resident {
         FileManager.default.fileExists(atPath: p)
             ? try? Data(contentsOf: URL(fileURLWithPath: p)) : nil
     }
-    let agentOpt: AgentHost? = restored.map { data in
+    let fromSnapshot: AgentHost? = restored.flatMap { data in
         AgentHost(
             snapshot: data, roots: moduleRoots, name: entryModule,
             makeProvider: makeProvider, resolveProvider: resolveProvider,
             providerCatalog: providerCatalog, tools: registry, memory: memory,
             tokenBudget: tokenBudget, persona: persona, log: logSink)
-    } ?? AgentHost(
+    }
+    // A state file we cannot use must not stop the agent from running. It used to:
+    // the process died here, and under a launchd KeepAlive that is a restart loop
+    // once a minute, for ever, with the newsletter never going out. Booting fresh
+    // loses what the heap held — say so loudly, and keep the heap for a post-mortem
+    // rather than let the first checkpoint overwrite it.
+    if let statePath, restored != nil, fromSnapshot == nil {
+        let kept = statePath + ".unusable"
+        try? FileManager.default.removeItem(atPath: kept)
+        try? FileManager.default.moveItem(atPath: statePath, toPath: kept)
+        FileHandle.standardError.write(Data(
+            "[daemon] unusable state — booting fresh, previous heap kept at \(kept)\n".utf8))
+    }
+    let agentOpt: AgentHost? = fromSnapshot ?? AgentHost(
         entryModule: entryModule, roots: moduleRoots,
         makeProvider: makeProvider, resolveProvider: resolveProvider,
         providerCatalog: providerCatalog, tools: registry, memory: memory,
