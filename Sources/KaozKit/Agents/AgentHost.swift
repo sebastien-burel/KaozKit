@@ -113,6 +113,10 @@ public nonisolated final class AgentHost: @unchecked Sendable {
                 orchestrator, export: "loadAgent",
                 params: AgentJSON.string(["path": entryModule]))
         }
+        // Stamp which build's surface this heap froze, so a later process can tell
+        // whether the heap is its own to drive (see `JSResource.surfaceID`).
+        _ = try? engine.eval(
+            "globalThis.__kaozSurface = \(AgentJSON.jsLiteral(JSResource.surfaceID))")
     }
 
     /// Restore a resident agent from a snapshot written by `writeSnapshot()`.
@@ -145,6 +149,18 @@ public nonisolated final class AgentHost: @unchecked Sendable {
         engine.withMachine { machine in
             xsBridgeSetContext(machine, hostPtr)
             JSResource.registerRoots(roots)
+        }
+        // A heap freezes its own copy of the orchestrator and the host surface,
+        // and never re-evaluates them. If they came from another build, the half
+        // of the surface living in the heap no longer matches the half living
+        // here — and the mismatch is silent: a checkpoint request that returns
+        // `true` and is never honoured is how this was found. Refuse the heap
+        // rather than drive it wrong; the caller boots fresh (see main.swift).
+        let ownSurface = (try? engine.eval(
+            "(globalThis.__kaozSurface ?? '') === \(AgentJSON.jsLiteral(JSResource.surfaceID))"))
+        guard ownSurface == "true" else {
+            log("snapshot: written by a different kaoz build — refusing it")
+            return nil
         }
         // The agent is NOT re-imported: the restored heap already holds the
         // orchestrator and its state. Which generation, though, decides how this

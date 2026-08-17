@@ -61,4 +61,33 @@ enum JSResource {
     static func importStatement(_ name: String) -> String? {
         path(name).map { "import(\(AgentJSON.jsLiteral($0)));" }
     }
+
+    /// The modules a resident heap freezes into itself: the orchestrator, and the
+    /// host surface it hands to an agent. A restored heap never re-evaluates
+    /// them — it comes back holding the copies the *writing* build put there.
+    static let frozenSurface = ["agent-orchestrator", "host"]
+
+    /// Identifies the frozen surface of THIS build. Stamped into a heap when one
+    /// is created, checked when one is revived: a heap whose surface came from
+    /// another build is not this build's to drive.
+    ///
+    /// Why this has to be checked. On 2026-08-17 a resident agent revived a heap
+    /// written by an earlier build, asked for a checkpoint, and got `true` — yet
+    /// the request never reached `onSnapshotRequest`: nothing was written, and
+    /// nothing was logged. The heap's frozen half of the surface no longer lined
+    /// up with the host it was now talking to. The *host table* is name-checked
+    /// when a snapshot is read (`xsBridgeReadSnapshot`), but the JS half was
+    /// checked by nothing at all. This closes that half.
+    ///
+    /// FNV-1a over the bytes: no dependency, and stable across runs — the same
+    /// build must always yield the same digest, or every restart would look like
+    /// a new build and no heap would ever be reusable.
+    static let surfaceID: String = {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for name in frozenSurface {
+            let bytes = path(name).flatMap { FileManager.default.contents(atPath: $0) } ?? Data()
+            for byte in bytes { hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3 }
+        }
+        return String(hash, radix: 16)
+    }()
 }
