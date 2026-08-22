@@ -36,7 +36,9 @@ public nonisolated final class AgentHost: @unchecked Sendable {
 
     // Checkpointing (host.snapshot / checkpointEveryDelivery). The heap can only
     // be written between deliveries — never from inside one — so a request is
-    // recorded here and honoured once the delivery that made it has settled.
+    // recorded here and honoured once the JS frame that made it has unwound:
+    // when a delivery is in flight, by its defer; when none is (work driven by a
+    // host-call completion), by the request itself.
 
     /// Where a checkpoint goes. Nil means this host does not persist: JS gets
     /// `false` from `host.snapshot()` and nothing is ever written.
@@ -251,7 +253,19 @@ public nonisolated final class AgentHost: @unchecked Sendable {
             guard let self, self.snapshotSink != nil else { return false }
             self.lock.lock()
             self.checkpointRequested = true
+            // A request can be made with NO delivery in flight. A resident agent's
+            // work advances on host-call completions, not only on deliveries: the
+            // handler that started the work returned long ago, and the code that
+            // finishes it — and asks to be checkpointed — runs outside any of them.
+            // `deliver`'s defer would then not collect the flag until the *next*
+            // command, which for a once-a-day agent means the next morning: the
+            // heap on disk stays a day stale, and the write that finally lands
+            // catches the machine in the middle of the following run.
+            // Whoever gets there first honours it; `scheduleCheckpointIfNeeded`
+            // clears the flag under the lock, so it is honoured exactly once.
+            let outsideDelivery = self.pending.isEmpty
             self.lock.unlock()
+            if outsideDelivery { self.scheduleCheckpointIfNeeded() }
             return true
         }
     }
