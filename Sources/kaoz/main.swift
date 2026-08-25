@@ -1,6 +1,7 @@
 import Foundation
 import KaozKit
 import KaozMLX
+import KaozLlamaCpp
 
 // kaoz — runs a standalone JavaScript agent headless on top of KaozKit.
 //
@@ -71,6 +72,8 @@ let stateAuto = popBool("--state-auto")
 // scheduled ticks (host.schedule/every) keep firing. Still reads stdin for more
 // messages in the background. Runs until killed (Ctrl-C).
 let daemon = popBool("--daemon")
+// llama.cpp: optional vision projector next to the GGUF (`mmproj-*.gguf`).
+let mmprojPath = popFlag("--mmproj")
 
 // Module roots (Moddable-style): named external roots the agent imports from
 // with `import "nom/module"`. Each `--modules nom=dir` maps a prefix to a dir;
@@ -143,7 +146,7 @@ guard let scriptPath = args.first else {
         [--modules nom=dir ...] [--resident [--daemon] [--state FILE [--state-auto]]] \
         [--allow-write DIR ...] [--allow-shell [--shell-dir DIR]] \
         [--allow-http [--http-host H ...]] [--webhook PORT] [--budget TOKENS] \
-        [--email] [--persona FILE]
+        [--email] [--persona FILE] [--mmproj FILE]
         """, code: 2)
 }
 
@@ -244,6 +247,14 @@ let resolveProvider: @Sendable (String, [String: Any]) -> (any LLMProvider)? = {
         // CLI — run `scripts/link-mlx-metallib.sh` after building (see the script).
         guard let model, !model.isEmpty else { return nil }
         return MLXLLMProvider(modelID: model)
+    case "llamacpp":
+        // `--model` is a PATH here, not a HuggingFace id: llama.cpp loads a GGUF
+        // file the user already has. `--mmproj` adds a vision projector.
+        guard let model, !model.isEmpty else { return nil }
+        return LlamaCppProvider(
+            modelPath: (model as NSString).expandingTildeInPath,
+            mmprojPath: (options["mmproj"] as? String ?? mmprojPath)
+                .map { ($0 as NSString).expandingTildeInPath })
     default:
         return nil
     }
@@ -269,6 +280,7 @@ let providerCatalog: [ProviderDescriptor] = [
     .init(id: "local", name: "Local OpenAI", model: model),
     .init(id: "apple", name: "Apple Intelligence"),
     .init(id: "mlx", name: "MLX", model: model),
+    .init(id: "llamacpp", name: "llama.cpp", model: model),
 ]
 
 // MARK: - Tools + memory (top-level code in main.swift is @MainActor)
@@ -637,6 +649,10 @@ do {
         input: input,
         timeout: timeout)
     print(result)
+    // Before the C++ static destructors run: a loaded GGUF still holding Metal
+    // buffers makes ggml abort as it frees the device.
+    await LlamaCppProvider.releaseLoadedModels()
 } catch {
+    await LlamaCppProvider.releaseLoadedModels()
     die("error: \(error.localizedDescription)")
 }

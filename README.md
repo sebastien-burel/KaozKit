@@ -50,6 +50,7 @@ KaozJS          — Swift XSEngine (dedicated thread + CFRunLoop, snapshot, modu
 KaozHostC (C)   — the agent's XS host functions (host.llm/tool/memory/schedule)
 KaozKit         — agent runtime: providers, tools, memory, channels, persona
 KaozMLX         — MLX local-inference providers (heavy deps, opt-in)
+KaozLlamaCpp    — llama.cpp local inference over GGUF (opt-in)
 kaoz            — headless CLI / resident daemon
 ```
 
@@ -171,6 +172,14 @@ Every provider conforms to `LLMProvider` (a streaming `chat(messages:tools:)`).
 
 **KaozMLX** (opt-in) adds on-device Apple-silicon inference: `MLXLLMProvider`, `MLXEmbeddingProvider`, plus `MLXModelStore` / `MLXDownloadCenter` / `ModelCatalogService` for Hugging Face model management. Its Metal library isn't produced by `swift build` for a CLI, so run `scripts/link-mlx-metallib.sh` once after building to use `--provider mlx` from `kaoz` (see the script header).
 
+**KaozLlamaCpp** (opt-in) is its sibling: the same `LLMProvider` contract over **llama.cpp**, running any **GGUF** in-process. It exists because MLX trails llama.cpp on new architectures — the checkpoint `mlx-swift-lm` cannot load yet usually has a GGUF that runs today. `--model` here is a **path to a `.gguf`**, not a Hugging Face id, and `--mmproj` adds a vision projector:
+
+```bash
+kaoz agent.js --provider llamacpp --model ~/models/qwen2.5-3b-instruct-q4_k_m.gguf
+```
+
+Tool calling works: the tool schemas an agent registers at runtime reach the model, and the calls it emits come back as `StreamEvent.toolCall` for KaozKit's own tool loop to run. Unload before exiting (`LlamaCppProvider.releaseLoadedModels()`) — C++ static destructors free the Metal device at `exit`, and a model still holding buffers makes ggml abort.
+
 ## Tools & confinement
 
 Tools conform to `Tool` and register in a `ToolRegistry`. Read tools are safe by default; actuation is opt-in and confined.
@@ -188,8 +197,9 @@ Tools conform to `Tool` and register in a `ToolRegistry`. Read tools are safe by
 
 | Flag | Effect |
 | --- | --- |
-| `--provider` | `anthropic` · `js-anthropic` · `js-openai` · `js-ollama` · `js-google` · `js-kimi` · `local` · `apple` · `mlx` (default `anthropic`) |
-| `--model M` / `--input JSON` / `--timeout SEC` | model, agent input, per-run budget |
+| `--provider` | `anthropic` · `js-anthropic` · `js-openai` · `js-ollama` · `js-google` · `js-kimi` · `local` · `apple` · `mlx` · `llamacpp` (default `anthropic`) |
+| `--model M` / `--input JSON` / `--timeout SEC` | model, agent input, per-run budget (`--model` is a `.gguf` **path** under `--provider llamacpp`) |
+| `--mmproj FILE` | vision projector for `--provider llamacpp` |
 | `--library DIR` / `--modules nom=dir` | extra module roots (the agent's own dir is always a root; resolution is confined) |
 | `--root DIR` | authorize a folder for the read file-tools |
 | `--allow-write DIR` / `--allow-shell [--shell-dir DIR]` / `--allow-http [--http-host H]` | opt-in actuation |

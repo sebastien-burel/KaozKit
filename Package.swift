@@ -55,6 +55,7 @@ let package = Package(
         // MLX local-inference providers, isolated so the base library and the
         // headless CLI can opt out of the heavy MLX / transformers dependencies.
         .library(name: "KaozMLX", targets: ["KaozMLX"]),
+        .library(name: "KaozLlamaCpp", targets: ["KaozLlamaCpp"]),
         // Headless runner / resident daemon for autonomous JS agents.
         .executable(name: "kaoz", targets: ["kaoz"]),
     ],
@@ -80,6 +81,17 @@ let package = Package(
             revision: "a65e78f1e6cfb482a28788e1f250896a86a3c837"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
+        // A fork, pinned to a revision, for the same reason mlx-swift-lm is: it
+        // carries changes upstream has not taken yet. `AnyLLMTool` could only
+        // describe a tool whose schema comes from a Swift type, and KaozKit's
+        // come from a registry at runtime; the branch adds the initializer that
+        // was missing (and widens swift-syntax, which otherwise collides with
+        // mlx-swift-lm's). The two halves are proposed upstream as separate
+        // PRs — `packaging-fixes` and `runtime-tool-schemas`; `kaozkit` is the
+        // branch that carries both until they land. Drop the fork then.
+        .package(
+            url: "https://github.com/sebastien-burel/LocalLLMClient",
+            revision: "00b0b4a9aadab93896d1dcd524b7d2ba00064de0"),
     ],
     targets: [
         // C layer: the XS engine + the bridge shim.
@@ -134,11 +146,32 @@ let package = Package(
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ]
         ),
+        // llama.cpp local inference, the sibling of KaozMLX: same LLMProvider
+        // contract, a backend that runs GGUF. Its own product, so a consumer
+        // takes one engine, both, or neither.
+        //
+        // C++ interop is required by LocalLLMClientLlama and stops here on
+        // purpose: KaozLlamaCpp's public surface is plain Swift, so importers
+        // (the kaoz CLI, the TyKaoz app) never need the mode themselves.
+        .target(
+            name: "KaozLlamaCpp",
+            dependencies: [
+                "KaozKit",
+                .product(name: "LocalLLMClientCore", package: "LocalLLMClient"),
+                .product(name: "LocalLLMClientLlama", package: "LocalLLMClient"),
+            ],
+            swiftSettings: [.interoperabilityMode(.Cxx)]
+        ),
         // Headless runner. Depends on KaozMLX so it can run MLX (and Apple
         // Intelligence) providers too.
         .executableTarget(
             name: "kaoz",
-            dependencies: ["KaozKit", "KaozMLX"]
+            dependencies: ["KaozKit", "KaozMLX", "KaozLlamaCpp"],
+            // Importing KaozLlamaCpp means loading its swiftmodule, which records
+            // the llama.cpp Clang modules underneath — so the mode reaches every
+            // importer whatever KaozLlamaCpp exposes. `internal import` does not
+            // hide it. Any app embedding this provider needs the same setting.
+            swiftSettings: [.interoperabilityMode(.Cxx)]
         ),
         // C side of the engine's demo host: host.echo/stream/fail/add written
         // against xs.h. Same defines as KaozJSCore — the txMachine ABI needs them.

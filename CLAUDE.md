@@ -38,6 +38,7 @@ KaozJS          — Swift XSEngine (dedicated thread + CFRunLoop, snapshot, modu
 KaozHostC (C)   — the agent's XS host functions (host.llm/tool/memory/schedule)
 KaozKit         — agent runtime: providers, tools, memory, channels, persona
 KaozMLX         — MLX local-inference providers (heavy deps, opt-in)
+KaozLlamaCpp    — llama.cpp local inference over GGUF (opt-in)
 kaoz            — headless CLI / resident daemon
 ```
 
@@ -173,6 +174,7 @@ Sources/
     Resources/js/              # JS loaded at runtime via Bundle.module: agent-orchestrator.js, provider-orchestrator.js,
                                #   {anthropic,google,ollama,openai}.js, xmlhttprequest.js, tools/{datetime,fetch-url,web-search,news-api,http}.js
   KaozMLX/                # Swift, opt-in: MLX local inference (MLXLLMProvider/MLXEmbeddingProvider + Models/ store & catalog)
+  KaozLlamaCpp/           # Swift, opt-in: llama.cpp inference over GGUF (LlamaCppProvider + LlamaChatActor)
   kaoz/                   # Swift executable: headless agent CLI / resident daemon (main.swift, CLIMemoryStore.swift)
   KaozJSTestC/            # C side of the engine demo host (consumer host-function pattern)
     demoHost.c                 # print (+capture) + host.echo/stream/fail/add — xsServicePromise + @_cdecl calls into Swift

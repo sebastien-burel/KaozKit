@@ -10,6 +10,14 @@
       }
     },
     {
+      "identity" : "localllmclient",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/sebastien-burel/LocalLLMClient",
+      "state" : {
+        "revision" : "00b0b4a9aadab93896d1dcd524b7d2ba00064de0"
+      }
+    },
+    {
       "identity" : "mlx-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift",
