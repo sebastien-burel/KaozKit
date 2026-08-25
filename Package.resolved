@@ -14,7 +14,7 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/sebastien-burel/LocalLLMClient",
       "state" : {
-        "revision" : "00b0b4a9aadab93896d1dcd524b7d2ba00064de0"
+        "revision" : "225a028c2ba68bee0d22525ca0d0c8c7a9e1ac65"
       }
     },
     {

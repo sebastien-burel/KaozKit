@@ -82,16 +82,15 @@ let package = Package(
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
         // A fork, pinned to a revision, for the same reason mlx-swift-lm is: it
-        // carries changes upstream has not taken yet. `AnyLLMTool` could only
+        // carries a change upstream has not taken yet. `AnyLLMTool` can only
         // describe a tool whose schema comes from a Swift type, and KaozKit's
-        // come from a registry at runtime; the branch adds the initializer that
-        // was missing (and widens swift-syntax, which otherwise collides with
-        // mlx-swift-lm's). The two halves are proposed upstream as separate
-        // PRs — `packaging-fixes` and `runtime-tool-schemas`; `kaozkit` is the
-        // branch that carries both until they land. Drop the fork then.
+        // come from a registry at runtime; this adds the initializer that was
+        // missing. Proposed upstream as tattn/LocalLLMClient#100 — drop the fork
+        // when it lands. (Its sibling, the swift-syntax range that collided with
+        // mlx-swift-lm's, merged as #99 and is already gone from this delta.)
         .package(
             url: "https://github.com/sebastien-burel/LocalLLMClient",
-            revision: "00b0b4a9aadab93896d1dcd524b7d2ba00064de0"),
+            revision: "225a028c2ba68bee0d22525ca0d0c8c7a9e1ac65"),
     ],
     targets: [
         // C layer: the XS engine + the bridge shim.
