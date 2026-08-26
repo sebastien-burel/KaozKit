@@ -90,7 +90,7 @@ let package = Package(
         // mlx-swift-lm's, merged as #99 and is already gone from this delta.)
         .package(
             url: "https://github.com/sebastien-burel/LocalLLMClient",
-            revision: "225a028c2ba68bee0d22525ca0d0c8c7a9e1ac65"),
+            revision: "81746736746607956ca7f66efee120257425fa3a"),
     ],
     targets: [
         // C layer: the XS engine + the bridge shim.
