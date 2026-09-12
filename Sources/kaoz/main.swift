@@ -136,7 +136,7 @@ if let probePath = popFlag("--http-eval") {
 // hand — bump it together with the git tag. The engine version comes from XS
 // itself (`XS_MAJOR_VERSION.XS_MINOR_VERSION`), the same pair the snapshot
 // signature is built from.
-let kaozVersion = "0.1.1"
+let kaozVersion = "0.2.0"
 if popBool("--version") {
     print("kaoz \(kaozVersion) (XS \(String(cString: xsBridgeEngineVersion())))")
     exit(0)
