@@ -1,6 +1,7 @@
 import Foundation
 
-/// Makes an outbound HTTP request (any method) and returns { status, body }.
+/// Makes an outbound HTTP request (any method) and returns
+/// { status, contentType, body|base64, finalURL, headers }.
 /// This is the universal **outbound channel**: an agent posts to a Slack /
 /// Telegram / Discord webhook or any REST API. Opt-in and, optionally, host-
 /// restricted (an allowlist mitigates SSRF to internal services). Distinct from
@@ -85,6 +86,21 @@ public struct HTTPRequestTool: Tool {
             let contentType = (response as? HTTPURLResponse)?
                 .value(forHTTPHeaderField: "Content-Type") ?? ""
             var result: [String: Any] = ["status": status, "contentType": contentType]
+            // L'URL d'arrivée. `URLSession` suit les 301/302 en silence : sans
+            // ce champ, l'appelant ne peut pas savoir où il a atterri — ni
+            // qu'une redirection l'a fait sortir de la liste blanche, qui n'est
+            // vérifiée que sur l'URL initiale.
+            result["finalURL"] = (response.url ?? url).absoluteString
+            // Les en-têtes de réponse, noms en MINUSCULES : la casse rendue par
+            // `HTTPURLResponse` n'est pas garantie, et un appelant qui cherche
+            // « x-wp-total » ne doit pas dépendre de celle du serveur.
+            var headers: [String: String] = [:]
+            if let http = response as? HTTPURLResponse {
+                for (name, value) in http.allHeaderFields {
+                    headers[String(describing: name).lowercased()] = String(describing: value)
+                }
+            }
+            result["headers"] = headers
             // Une réponse binaire — une image, typiquement — ne survit pas à un
             // décodage UTF-8 : elle en ressortait chaîne vide. On la rend en
             // base64 plutôt que de la perdre en silence.
