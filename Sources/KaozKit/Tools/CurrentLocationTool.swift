@@ -11,8 +11,16 @@ import MapKit
 public struct CurrentLocationTool: Tool {
     public let provider: any LocationProviding
 
-    public init(provider: any LocationProviding = AppleLocationProvider.shared) {
+    public init(provider: any LocationProviding) {
         self.provider = provider
+    }
+
+    /// The shared `AppleLocationProvider` is main-actor, so picking it up as
+    /// a default argument is not (a default value is evaluated nonisolated in
+    /// this language mode); this initializer is, and the tool runs anywhere.
+    @MainActor
+    public init() {
+        self.provider = AppleLocationProvider.shared
     }
 
     public let spec = ToolSpec(
