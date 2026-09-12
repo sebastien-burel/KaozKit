@@ -366,22 +366,34 @@ if allowEmail {
 // HTTP / pure tools are JS modules (datetime, fetch_url, web_search, news_search).
 var jsToolNames = ["datetime", "fetch-url"]
 var toolConfig: [String: Any] = [:]
+// Why a tool an agent may ask for isn't here. An agent written against
+// `web_search` still gets an answer without the key — the host drops the tool
+// and warns — and this is what the warning tells the user to do about it.
+var unavailable: [String: String] = [:]
 if let brave = env["BRAVE_API_KEY"], !brave.isEmpty {
     jsToolNames.append("web-search")
     toolConfig["braveApiKey"] = brave
     if let base = env["BRAVE_BASE_URL"], !base.isEmpty { toolConfig["braveBaseURL"] = base }
+} else {
+    unavailable["web_search"] = "set BRAVE_API_KEY to enable it"
 }
 if let newsAPI = env["NEWS_API_KEY"], !newsAPI.isEmpty {
     jsToolNames.append("news-api")
     toolConfig["newsApiKey"] = newsAPI
     if let base = env["NEWS_API_BASE_URL"], !base.isEmpty { toolConfig["newsApiBaseURL"] = base }
+} else {
+    unavailable["news_search"] = "set NEWS_API_KEY to enable it"
+}
+if !allowEmail {
+    unavailable["send_email"] = "pass --email to enable it"
+    unavailable["read_email"] = "pass --email to enable it"
 }
 if let jsTools = JSToolBundle(
     toolModules: jsToolNames, config: toolConfig,
     tools: ToolRegistry(tools: []), memory: memory) {
     tools.append(contentsOf: jsTools.tools())
 }
-let registry = ToolRegistry(tools: tools)
+let registry = ToolRegistry(tools: tools, unavailable: unavailable)
 
 // MARK: - Run
 

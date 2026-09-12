@@ -161,10 +161,20 @@ public nonisolated final class TyKaozHost {
         Task { @MainActor in
             let available = self.tools.specs
             var specs: [ToolSpec] = []
+            var warned: Set<String> = []
             for name in requestedNames {
                 guard let spec = available.first(where: { $0.name == name }) else {
-                    reply.reject(AgentJSON.string("unknown tool: \(name)"))
-                    return
+                    // An agent written against a tool this host was not given
+                    // (`web_search` without its key, say) still deserves an
+                    // answer: drop the tool, say so once, and let the model work
+                    // with what is there. Failing the whole turn over one
+                    // missing capability is what a first-time user hits before
+                    // anything else works.
+                    if warned.insert(name).inserted {
+                        let hint = self.tools.unavailable[name].map { " (\($0))" } ?? ""
+                        self.log("warning: tool \"\(name)\" is unavailable\(hint); continuing without it")
+                    }
+                    continue
                 }
                 specs.append(spec)
             }

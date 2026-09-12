@@ -7,13 +7,20 @@ import Foundation
 /// inside the result so we can show them to the LLM as feedback.
 public struct ToolRegistry: Sendable {
     private let toolsByName: [String: any Tool]
+    /// Tools this registry could have held but doesn't, and why — keyed by
+    /// name, e.g. `"web_search": "set BRAVE_API_KEY to enable it"`. The consumer
+    /// assembling the registry is the only one who knows; the host reads it
+    /// when an agent asks for a tool that isn't there, so the warning can say
+    /// what would fix it.
+    public let unavailable: [String: String]
 
-    public init(tools: [any Tool]) {
+    public init(tools: [any Tool], unavailable: [String: String] = [:]) {
         var map: [String: any Tool] = [:]
         for tool in tools {
             map[tool.spec.name] = tool
         }
         self.toolsByName = map
+        self.unavailable = unavailable
     }
 
     public var all: [any Tool] { Array(toolsByName.values) }
