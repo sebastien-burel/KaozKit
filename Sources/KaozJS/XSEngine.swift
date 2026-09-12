@@ -95,7 +95,10 @@ public struct XSCreation {
   public init() {}
 }
 
-public final class XSEngine {
+// Safe to hand across threads: the two stored properties are immutable, and
+// every machine access is marshalled onto the engine's own thread through
+// `loop.sync` — nothing here is ever touched from the caller's thread.
+public final class XSEngine: @unchecked Sendable {
   private let loop = RunLoopThread()
   private let machine: UnsafeMutableRawPointer
 
