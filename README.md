@@ -35,7 +35,7 @@ Fair question — JSC ships with the OS. XS earns its place with capabilities JS
 - **Heap snapshots.** `writeSnapshot()` serializes the entire JS heap; `init(snapshot:)` restores it in a new process. A resident agent's state, conversation, and scheduled work survive relaunches — no serialization layer to write.
 - **Multi-machine services.** Agents spawn sub-agents (`new Thread` + `new Service`) as isolated XS machines with alien-marshalled calls between them.
 - **Confinement by construction.** Module resolution is restricted to registered roots; the `host.*` surface is the *only* capability an agent has. Secrets never enter JS — providers are resolved and keys injected on the Swift side.
-- **Small engine, tiny memory footprint.** XS was built for embedded systems, where every kilobyte counts — a full ES2023 engine that runs in a fraction of the memory JSC needs. That's what makes *one machine per agent* a reasonable architecture: spinning up sub-agents, or keeping several resident agents alive side by side, costs very little.
+- **Small engine, tiny memory footprint.** XS was built for embedded systems, where every byte counts — a full ES2026 engine that runs in a fraction of the memory JSC needs. That's what makes *one machine per agent* a reasonable architecture: spinning up sub-agents, or keeping several resident agents alive side by side, costs very little.
 - **Built to be embedded.** XS runs happily on a private thread with a clean C API, and `await` continuations settle correctly across the JS↔Swift boundary.
 
 If you only need to evaluate scripts, JSC is fine. If you want **stateful, restartable, confined agents**, that's what KaozKit is for.
