@@ -250,7 +250,11 @@ let resolveProvider: @Sendable (String, [String: Any]) -> (any LLMProvider)? = {
         return LocalOpenAIProvider(
             baseURL: url, apiKey: env["TYKAOZ_LOCAL_API_KEY"] ?? "", model: model)
     case "apple":
-        return AppleIntelligenceProvider()
+        // Foundation Models runs tools *inside* its session, so this provider
+        // needs the registry itself, not just the specs — without it, no tool
+        // is ever bridged and the model can't so much as read the clock.
+        // `registry` is assembled further down; this closure only runs later.
+        return AppleIntelligenceProvider(toolRegistry: registry)
     case "mlx":
         // MLX needs its Metal library, which `swift build` doesn't produce for a
         // CLI — run `scripts/link-mlx-metallib.sh` after building (see the script).
