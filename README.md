@@ -9,11 +9,11 @@ KaozKit embeds the [XS engine](https://github.com/Moddable-OpenSource/moddable) 
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ```js
-// agent.js — runs inside the engine
+// demo/weather.js — runs inside the engine
 export async function run(input) {
   const reply = await host.llm.chat(
     [{ role: "user", content: input.question }],
-    { tools: ["current_datetime", "web_search"] }   // the model may call these
+    { tools: ["current_datetime", "web_search"] }   // web_search needs BRAVE_API_KEY
   );
   await host.memory.save("last question", input.question);
   return { answer: reply };
@@ -22,11 +22,36 @@ export async function run(input) {
 
 ```bash
 export ANTHROPIC_API_KEY=…
-swift run -c release kaoz agent.js --provider anthropic --model claude-opus-4-8 \
+swift run -c release kaoz demo/weather.js --provider anthropic --model claude-opus-4-8 \
     --input '{"question":"what day is it?"}'
 ```
 
 ![The kaoz CLI running the same agent twice — first on Anthropic, then fully on-device with Apple Intelligence](demo/kaoz-demo.gif)
+
+*(`kaoz` here is `.build/release/kaoz` on the PATH — see [Install the kaoz CLI](#install-the-kaoz-cli).)*
+
+## Quick start
+
+macOS 26+, Apple Silicon, Xcode 26 (Swift 6). Apple Intelligence must be enabled in System Settings for `--provider apple`. From an empty folder:
+
+```bash
+# 1. XS engine sources (not vendored, LGPL — see License)
+git clone --depth 1 https://github.com/Moddable-OpenSource/moddable.git
+export MODDABLE="$PWD/moddable"
+
+# 2. KaozKit
+git clone https://github.com/sebastien-burel/KaozKit.git
+cd KaozKit
+./scripts/link-moddable.sh
+swift build -c release
+
+# 3. Your first agent — fully on-device, no API key needed
+swift run -c release kaoz demo/hello.js --provider apple
+```
+
+**With a cloud provider:** `export ANTHROPIC_API_KEY=…` and run the same agent with `--provider anthropic --model claude-opus-4-8`.
+
+**Optional tools:** `web_search` needs `BRAVE_API_KEY`, `news_search` needs `NEWS_API_KEY`, `send_email`/`read_email` need `--email` plus an SMTP account (see [CLI](#cli--kaoz)). Without them the tool is simply unavailable — an agent that asks for it gets a warning on stderr and carries on with the rest.
 
 ## Why XS, and not JavaScriptCore?
 
@@ -188,6 +213,7 @@ Tools conform to `Tool` and register in a `ToolRegistry`. Read tools are safe by
 
 | Flag | Effect |
 | --- | --- |
+| `--version` | print the package version and the XS engine version it links |
 | `--provider` | `anthropic` · `js-anthropic` · `js-openai` · `js-ollama` · `js-google` · `js-kimi` · `local` · `apple` · `mlx` (default `anthropic`) |
 | `--model M` / `--input JSON` / `--timeout SEC` | model, agent input, per-run budget |
 | `--library DIR` / `--modules nom=dir` | extra module roots (the agent's own dir is always a root; resolution is confined) |
@@ -212,6 +238,31 @@ Secrets are read from the environment: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `G
 | `MAIL_TO` (or `EMAIL_TO`) | recipients used when the agent names none — a newsletter's audience is configuration, not a model's choice |
 | `MAIL_ALLOWED_TO` | comma-separated allowlist bounding what the agent *may* name; an `@domain.tld` entry allows a whole domain. Unset ⇒ unconfined |
 | `PROTON_BRIDGE_HOST` / `_SMTP_PORT` / `_IMAP_PORT` / `_USER` / `_PASS` / `_FROM` / `_SMTP_TLS` / `_IMAP_TLS` | the Proton Bridge equivalents |
+
+## Debugging your agents
+
+The XS engine ships with a real source-level debugger, and `kaoz` is wired to it. This is a debugger for the agent's **JavaScript** — breakpoints, stepping, the call stack and every variable in scope — which no Node or Python agent harness gives you.
+
+**xsbug** is Moddable's GUI debugger. It is built with the Moddable SDK tools (`cd $MODDABLE/build/makefiles/mac && make`) and lands in `$MODDABLE/build/bin/mac/release/xsbug.app`. Open it, then run `kaoz` as usual: every engine `kaoz` creates connects to xsbug on `localhost:5002` automatically — there is no flag to pass. A `debugger;` statement anywhere in your agent stops execution right there, in xsbug, with the stack and the variables. Expect more than one machine in the list: the JS tool bundle, a JS provider, or a sub-agent each run in their own engine, and each is named (`js-tools`, the agent after its file, and so on).
+
+**xsdb** is the command-line variant, modelled on gdb, and made to be driven by a script — or by an LLM: Claude Code can debug an agent with it. It lives in `$MODDABLE/tools/xsbug-log` (run `npm install` there once) and listens on the same port:
+
+With a `debugger;` added to `demo/hello.js` right after the `question` line:
+
+```
+$ node $MODDABLE/tools/xsbug-log/xsbug-log.js        # terminal 1 — waits for a connection
+$ kaoz demo/hello.js --provider apple                # terminal 2 — connects on its own
+
+[Thread 2] Connected to "hello"
+Debugger, run() at hello.js:9
+(xsdb) bt
+  #0: run at hello.js:9
+(xsdb) print question
+  question = 'What day is it today, and what can you do for me?'
+(xsdb) continue
+```
+
+`XSBUG_HOST` and `XSBUG_PORT` redirect the connection. JavaScript developers often reach for `console.log()`. Here is the alternative.
 
 ## The engine layer (KaozJS)
 
@@ -275,12 +326,24 @@ export MODDABLE="$PWD/moddable"
 ```bash
 swift build -c release
 swift run -c release KaozJSTests        # engine regression suite; non-zero exit on any failure
-swift run -c release kaoz agent.js --provider anthropic --input '{"question":"…"}'
+swift run -c release kaoz demo/weather.js --provider anthropic --input '{"question":"…"}'
 ```
 
 `KaozJSTests` is a multi-phase CLI harness whose demo host doubles as the engine regression suite; the JS fixtures it drives live in `agents/`.
 
 > **If a build hangs at 0 % CPU with no error**, a stale macro-plugin binary in `.build` is the likely cause: `KaozMLX` expands the `mlx-swift-lm` macros (`#hubDownloader()`, `#huggingFaceTokenizerLoader()`) through a plugin executable, and once that binary is left corrupt — by an interrupted build, say — every later compile reuses it and waits forever on a process that answers nothing. SwiftPM never rebuilds it on its own. `rm -rf .build` clears it; re-run `scripts/link-mlx-metallib.sh` afterwards, since the Metal library lives there too.
+
+## Install the kaoz CLI
+
+`swift build -c release` leaves the binary at `.build/release/kaoz` (on Apple Silicon, `.build/arm64-apple-macosx/release/` is the same place). After that, `kaoz` and `swift run -c release kaoz` are equivalent; this README uses `swift run` in the Quick start and `kaoz` afterwards.
+
+```bash
+./scripts/install-kaoz.sh          # symlinks /usr/local/bin/kaoz → .build/release/kaoz, then runs kaoz --version
+```
+
+Or without `sudo`: `export PATH="$PWD/.build/release:$PATH"`.
+
+It is a symlink, deliberately not a copy: the runtime's JavaScript resources and the MLX Metal library live next to the binary, and a copy moved elsewhere no longer finds them. The flip side: `rm -rf .build` breaks the link — run the script again after a clean build.
 
 ## Status
 

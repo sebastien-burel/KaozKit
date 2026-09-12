@@ -320,12 +320,27 @@ embedding similarity behind `MemoryStoring`/`MemoryRetrieving`. `WebhookServer` 
 inbound HTTP bodies to a resident agent.
 
 **CLI (`kaoz`).** `Sources/kaoz/main.swift` is the canonical worked example: it maps
-`--provider`/env secrets to concrete providers via `resolveProvider`, assembles the tool set
-from opt-in flags (`--root`/`--allow-write`/`--allow-shell`/`--allow-http`/`--email`), and
+`--provider`/env secrets to concrete providers via `resolveProvider` (Apple Intelligence gets
+the *registry*, not just specs — Foundation Models runs tools inside its session, and an empty
+registry silently bridges none), assembles the tool set from opt-in flags
+(`--root`/`--allow-write`/`--allow-shell`/`--allow-http`/`--email`), records in
+`ToolRegistry.unavailable` why a key-gated tool is absent — so an agent asking for
+`web_search` without `BRAVE_API_KEY` gets a warning naming the variable, not a failed turn — and
 runs `AgentRuntime.runRooted` (or an `AgentHost` for `--resident`/`--daemon`/`--webhook`,
 with `--state` snapshotting the heap — atomically, on exit and on each `host.snapshot()`;
 `--state-auto` after every delivery — and calling `resumeFromSnapshot()` before the first
-message when it started from one).
+message when it started from one). `kaoz --version` prints the hand-set package version
+(bump it with the tag) and the XS version from `xsBridgeEngineVersion()`.
+`scripts/install-kaoz.sh` symlinks the binary into `/usr/local/bin` — a symlink because the
+JS resources and the MLX metallib live next to it; `rm -rf .build` breaks it.
+
+**Debugging.** `mxDebug=1` is in `xsDefines`, so every engine — release builds included —
+calls `mac_xs.c::fxConnect` at creation and attaches to xsbug on `localhost:5002` if it is
+listening (`XSBUG_HOST`/`XSBUG_PORT` override; nothing to pass to `kaoz`). xsdb is the
+command-line variant, `node $MODDABLE/tools/xsbug-log/xsbug-log.js`, same port. A
+`debugger;` in an agent stops it there; each machine shows up separately, by name. The
+demos live in `demo/` (`hello.js` — no key, `weather.js`, `resident-checkpoint.js`);
+`agents/` is the harness's engine fixtures, not a place for agents.
 
 ## Critical invariants (must always hold)
 
