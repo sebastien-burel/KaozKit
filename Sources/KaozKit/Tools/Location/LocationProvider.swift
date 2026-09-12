@@ -26,9 +26,9 @@ enum LocationError: Error, LocalizedError, Equatable {
 struct LocationFixSignals: OptionSet, Sendable {
     let rawValue: Int
 
-    /// The system reported it cannot determine the position — on a desktop
-    /// Mac this almost always means Wi-Fi is off (no GPS; positioning scans
-    /// nearby Wi-Fi networks).
+    /// The system reported it cannot determine the position. A Mac has no GPS:
+    /// it triangulates from the Wi-Fi access points around it, so in a sparse
+    /// area the computation is marginal and often fails outright.
     static let locationUnavailable = LocationFixSignals(rawValue: 1 << 0)
     /// The authorization prompt is still on screen.
     static let authorizationRequestInProgress = LocationFixSignals(rawValue: 1 << 1)
@@ -37,10 +37,14 @@ struct LocationFixSignals: OptionSet, Sendable {
 
     var timeoutMessage: String {
         if contains(.locationUnavailable) {
+            // Asking again is worth it: the session stays warm, so a fix that
+            // lands after this timeout serves the next call immediately.
             return """
-            le système ne peut pas déterminer la position. Sur un Mac de \
-            bureau, la localisation nécessite le Wi-Fi activé (même sans \
-            réseau connecté) — vérifie qu'il ne soit pas coupé.
+            le système n'a pas encore de position. Un Mac n'a pas de GPS : il \
+            se repère en triangulant les réseaux Wi-Fi alentour, et là où ils \
+            sont peu nombreux le calcul échoue souvent ou demande plusieurs \
+            minutes. La recherche continue en arrière-plan — redemande un peu \
+            plus tard.
             """
         }
         if contains(.authorizationRequestInProgress) {
@@ -50,6 +54,25 @@ struct LocationFixSignals: OptionSet, Sendable {
             return "macOS considère l'app inactive — mets TyKaoz au premier plan et réessaie."
         }
         return "aucun fix obtenu dans le délai imparti"
+    }
+}
+
+/// The "is this fix good enough?" decision, kept as a pure value: the provider
+/// itself talks to the real location daemon and cannot run in CI.
+enum LocationFixPolicy {
+    /// Under this age a cached fix answers the question as well as a new one
+    /// would. Same threshold as `CurrentLocationTool.staleFixAge`, past which
+    /// the tool already caveats the age to the model.
+    static let freshFixMaxAge: TimeInterval = 300
+
+    /// Core Location signals "no fix" with a negative horizontal accuracy.
+    static func isUsable(_ fix: CLLocation) -> Bool {
+        fix.horizontalAccuracy >= 0
+    }
+
+    /// Good enough to return without waiting for a better one.
+    static func isFresh(_ fix: CLLocation) -> Bool {
+        isUsable(fix) && -fix.timestamp.timeIntervalSinceNow <= freshFixMaxAge
     }
 }
 
@@ -68,15 +91,29 @@ public protocol LocationProviding: Sendable {
 public final class AppleLocationProvider: NSObject, CLLocationManagerDelegate, LocationProviding {
     public static let shared = AppleLocationProvider()
 
-    /// Cold Wi-Fi-based fixes can take longer than 15 s on macOS.
-    private static let fixTimeout: Duration = .seconds(25)
-    private static let cachedFixMaxAge: TimeInterval = 60
+    /// Cold Wi-Fi-based fixes routinely exceed 25 s on macOS. The
+    /// shared session below means this wait is paid once, not on every call.
+    private static let fixTimeout: Duration = .seconds(40)
+    /// How long the session keeps running with nothing to show for it, so a
+    /// fix arriving after a timeout still serves the retry. When `locationd`
+    /// comes up empty it only rescans every 300 s (its `nexttimer`), so a
+    /// shorter window would expire before the next scan and learn nothing.
+    /// Only ever reached on failure: the monitor stops early once a fix lands.
+    private static let monitorLifetime: Duration = .seconds(330)
+    private static let pollInterval: Duration = .milliseconds(250)
 
     private let manager = CLLocationManager()
     private var authorizationContinuation: CheckedContinuation<CLAuthorizationStatus, Never>?
     private var lastFix: CLLocation?
     /// Diagnostic signals seen during the current fix attempt.
     private var signals: LocationFixSignals = []
+    /// The shared `liveUpdates()` consumer, when one is running.
+    private var monitor: Task<Void, Never>?
+    /// Calls currently waiting on a fix. The monitor stops once a fix has
+    /// landed and this is back to zero.
+    private var activeRequests = 0
+    /// A definitive authorization failure seen mid-stream.
+    private var streamError: LocationError?
 
     override init() {
         super.init()
@@ -84,9 +121,7 @@ public final class AppleLocationProvider: NSObject, CLLocationManagerDelegate, L
     }
 
     public func currentLocation() async throws -> CLLocation {
-        if let cached = lastFix,
-           cached.horizontalAccuracy >= 0,
-           -cached.timestamp.timeIntervalSinceNow <= Self.cachedFixMaxAge {
+        if let cached = lastFix, LocationFixPolicy.isFresh(cached) {
             return cached
         }
 
@@ -110,53 +145,95 @@ public final class AppleLocationProvider: NSObject, CLLocationManagerDelegate, L
         }
 
         signals = []
-        return try await withThrowingTaskGroup(of: CLLocation.self) { group in
-            group.addTask { @MainActor [weak self] in
-                for try await update in CLLocationUpdate.liveUpdates() {
-                    if update.authorizationDenied || update.authorizationDeniedGlobally {
-                        throw LocationError.denied
-                    }
-                    if update.authorizationRestricted {
-                        throw LocationError.restricted
-                    }
-                    // Record diagnostic hints so a timeout can explain itself.
-                    if update.locationUnavailable {
-                        self?.signals.insert(.locationUnavailable)
-                    }
-                    if update.authorizationRequestInProgress {
-                        self?.signals.insert(.authorizationRequestInProgress)
-                    }
-                    if update.insufficientlyInUse {
-                        self?.signals.insert(.insufficientlyInUse)
-                    }
-                    if let location = update.location,
-                       location.horizontalAccuracy >= 0 {
-                        self?.lastFix = location
-                        return location
-                    }
-                }
-                throw LocationError.unavailable(message: "flux interrompu sans fix")
-            }
-            group.addTask { @MainActor [weak self] in
-                try await Task.sleep(for: Self.fixTimeout)
-                // Last resort: the system's cached fix beats an error —
-                // the tool flags its age to the model.
-                if let cached = self?.manager.location,
-                   cached.horizontalAccuracy >= 0 {
-                    return cached
-                }
-                throw LocationError.unavailable(
-                    message: self?.signals.timeoutMessage
-                        ?? "aucun fix obtenu dans le délai imparti"
-                )
-            }
+        streamError = nil
+        activeRequests += 1
+        defer { activeRequests -= 1 }
+        startMonitorIfNeeded()
 
-            defer { group.cancelAll() }
-            guard let first = try await group.next() else {
-                throw LocationError.unavailable(message: "flux vide")
-            }
-            return first
+        let clock = ContinuousClock()
+        let deadline = clock.now + Self.fixTimeout
+        while clock.now < deadline {
+            if let error = streamError { throw error }
+            if let fix = lastFix, LocationFixPolicy.isFresh(fix) { return fix }
+            // Polling rather than a continuation registry: it cannot resume
+            // the same waiter twice, and 250 ms is nothing next to a Wi-Fi
+            // scan followed by a geocode round trip.
+            try await Task.sleep(for: Self.pollInterval)
         }
+
+        if let error = streamError { throw error }
+        // A known position, however old, beats an error: the tool flags its
+        // age to the model, and a Mac that has not moved is still where it was.
+        if let fix = lastFix, LocationFixPolicy.isUsable(fix) { return fix }
+        throw LocationError.unavailable(message: signals.timeoutMessage)
+    }
+
+    /// One shared `liveUpdates()` session, kept warm across calls. Cold
+    /// Wi-Fi-based positioning often outlasts a single tool call; re-opening a
+    /// session per call made every retry restart from cold and fail alike.
+    private func startMonitorIfNeeded() {
+        guard monitor == nil else { return }
+        monitor = Task { @MainActor [weak self] in
+            await self?.runMonitor()
+            self?.monitor = nil
+        }
+    }
+
+    private func runMonitor() async {
+        // `liveUpdates()` only *observes* positioning — it reports flags and
+        // authorization changes but never asks the system to locate us, so on
+        // its own the stream says "locationUnavailable" once and goes quiet.
+        // `startUpdatingLocation()` is what actually drives a Wi-Fi scan; the
+        // delegate below feeds the fixes back. Starting it once per monitor
+        // rather than once per call also avoids the start/stop churn that made
+        // the delegate API unreliable before.
+        manager.startUpdatingLocation()
+        defer { manager.stopUpdatingLocation() }
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { @MainActor [weak self] in
+                await self?.consumeUpdates()
+            }
+            group.addTask { @MainActor in
+                try? await Task.sleep(for: Self.monitorLifetime)
+            }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    private func consumeUpdates() async {
+        do {
+            for try await update in CLLocationUpdate.liveUpdates() {
+                if update.authorizationDenied || update.authorizationDeniedGlobally {
+                    streamError = .denied
+                    return
+                }
+                if update.authorizationRestricted {
+                    streamError = .restricted
+                    return
+                }
+                // Record diagnostic hints so a timeout can explain itself.
+                if update.locationUnavailable {
+                    signals.insert(.locationUnavailable)
+                }
+                if update.authorizationRequestInProgress {
+                    signals.insert(.authorizationRequestInProgress)
+                }
+                if update.insufficientlyInUse {
+                    signals.insert(.insufficientlyInUse)
+                }
+                if let location = update.location,
+                   LocationFixPolicy.isUsable(location) {
+                    lastFix = location
+                    signals = []
+                    // Nobody is waiting any more: stop scanning, so the menu
+                    // bar indicator goes out. After a timeout this is zero
+                    // with no fix yet — `monitorLifetime` then keeps the
+                    // stream open long enough to catch the late one.
+                    if activeRequests == 0 { return }
+                }
+            }
+        } catch {}
     }
 
     private func ensureAuthorized() async -> CLAuthorizationStatus {
@@ -165,6 +242,40 @@ public final class AppleLocationProvider: NSObject, CLLocationManagerDelegate, L
         return await withCheckedContinuation { continuation in
             authorizationContinuation = continuation
             manager.requestWhenInUseAuthorization()
+        }
+    }
+
+    public nonisolated func locationManager(
+        _ manager: CLLocationManager,
+        didUpdateLocations locations: [CLLocation]
+    ) {
+        Task { @MainActor in
+            guard let location = locations.last,
+                  LocationFixPolicy.isUsable(location) else { return }
+            lastFix = location
+            signals = []
+            // Nobody is waiting any more: stop scanning so the menu bar
+            // indicator goes out rather than lingering for the whole lifetime.
+            if activeRequests == 0 { monitor?.cancel() }
+        }
+    }
+
+    public nonisolated func locationManager(
+        _ manager: CLLocationManager,
+        didFailWithError error: Error
+    ) {
+        Task { @MainActor in
+            guard let clError = error as? CLError else { return }
+            switch clError.code {
+            case .denied:
+                streamError = .denied
+            case .locationUnknown:
+                // Transient: the scan has not converged yet. Keep waiting —
+                // abandoning here is what made `requestLocation()` unusable.
+                signals.insert(.locationUnavailable)
+            default:
+                break
+            }
         }
     }
 
