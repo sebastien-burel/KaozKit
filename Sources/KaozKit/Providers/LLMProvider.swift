@@ -42,6 +42,12 @@ public enum StreamEvent: Sendable, Hashable {
     /// Performance metrics for the turn, emitted once when the stream ends.
     /// Providers that can't measure anything never emit it.
     case metrics(GenerationMetrics)
+    /// The backend is bringing the model into memory before it can answer.
+    /// Local backends only, and only when the weights aren't loaded yet:
+    /// seconds to a minute of complete silence otherwise, which reads as a
+    /// hung app. Carries no text — the UI words it. Any later event means
+    /// the load is over.
+    case loadingModel
 }
 
 /// Performance metrics for one assistant turn. Every field is optional —
@@ -51,6 +57,11 @@ public enum StreamEvent: Sendable, Hashable {
 /// Other backends (Apple Intelligence) may leave most fields nil. Stored on
 /// the assistant `Message` for display and persistence; never sent to the LLM.
 public struct GenerationMetrics: Sendable, Hashable, Codable {
+    /// Empty, then filled field by field. Spelled out because the
+    /// memberwise init is internal, and providers living in another module
+    /// (KaozMLX) build one too.
+    public init() {}
+
     /// Input tokens, as reported by the server's usage block.
     public var promptTokens: Int? = nil
     /// Output tokens generated, as reported by the server's usage block.

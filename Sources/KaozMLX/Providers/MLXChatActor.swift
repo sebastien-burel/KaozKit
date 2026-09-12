@@ -26,8 +26,26 @@ public actor MLXChatActor {
         return actor
     }
 
+    /// How hard the model should think, when its chat template exposes the
+    /// knob. `.auto` sends nothing and keeps the template's own default.
+    public enum ReasoningEffort: String, Sendable {
+        case auto, low, medium, high
+
+        public init(setting: String) {
+            self = ReasoningEffort(rawValue: setting) ?? .auto
+        }
+    }
+
     public let modelID: String
     private var container: ModelContainer?
+
+    /// Whether the loaded model's chat template reads `reasoning_effort`,
+    /// and whether it spells the top level `xhigh`. Read once at load:
+    /// the vocabulary differs by family, and Qwen 3.5 raises a Jinja
+    /// exception on a value it doesn't know, so a hardcoded level would
+    /// break generation outright.
+    private var templateReadsReasoningEffort = false
+    private var templateUsesXHigh = false
     private let downloader: any Downloader
     private let tokenizerLoader: any TokenizerLoader
 
@@ -58,7 +76,8 @@ public actor MLXChatActor {
     /// we synthesise one so our agent loop can route results back).
     public func chat(
         messages: [ChatMessage],
-        tools: [KaozKit.ToolSpec]
+        tools: [KaozKit.ToolSpec],
+        reasoningEffort: ReasoningEffort = .auto
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -67,7 +86,19 @@ public actor MLXChatActor {
                 idleUnloadTask = nil
 
                 do {
+                    // Say so before the wait, not after: loading a local
+                    // model is the longest silence of the turn, and it comes
+                    // back mid-conversation once the idle unload has fired.
+                    if self.container == nil { continuation.yield(.loadingModel) }
                     let container = try await loadIfNeeded()
+                    // Time to first token, started here: the weight load
+                    // above is the first turn's one-off cost, not a property
+                    // of the generation, but everything below it counts —
+                    // `container.generate` builds the token iterator, and
+                    // that is where the prompt is prefilled. Timing from
+                    // after that call reported a TTFT shorter than the
+                    // prefill window it is supposed to contain.
+                    let generationStart = ContinuousClock.now
                     // gpt-oss speaks OpenAI's Harmony format: its chat
                     // template needs assistant tool calls in a structured
                     // `tool_calls` field (free text raises a Jinja
@@ -78,9 +109,16 @@ public actor MLXChatActor {
                         || modelID.localizedCaseInsensitiveContains("gpt_oss")
                         || modelID.localizedCaseInsensitiveContains("gptoss")
                     let mappedTools = tools.isEmpty ? nil : tools.compactMap(Self.mapTool)
+                    let context = reasoningEffortContext(reasoningEffort)
                     let userInput = isHarmony
-                        ? UserInput(messages: Self.mapMessagesHarmony(messages), tools: mappedTools)
-                        : UserInput(chat: Self.mapMessages(messages), tools: mappedTools)
+                        ? UserInput(
+                            messages: Self.mapMessagesHarmony(messages),
+                            tools: mappedTools,
+                            additionalContext: context)
+                        : UserInput(
+                            chat: Self.mapMessages(messages),
+                            tools: mappedTools,
+                            additionalContext: context)
                     let lmInput = try await container.prepare(input: userInput)
                     let params = GenerateParameters(
                         maxTokens: 4096,
@@ -105,20 +143,33 @@ public actor MLXChatActor {
                     let needsGemma4 = modelID.localizedCaseInsensitiveContains("gemma-4")
                         || modelID.localizedCaseInsensitiveContains("gemma4")
                     let blocks = needsGemma4 ? Self.gemma4Blocks : Self.thinkBlocks
-                    var streamBuffer = ""
+                    var streamState = StreamState()
+                    // Qwen 3.5 (and the DeepSeek-R1 distills) end the
+                    // generation prompt with the `<think>` marker, so the
+                    // model only ever emits the closing tag. Start the
+                    // parser inside the reasoning block, or the whole chain
+                    // of thought lands in the answer with a stray
+                    // `</think>` at the end of it.
+                    if !isHarmony, !needsGemma4,
+                       let think = blocks.first,
+                       await Self.promptOpensReasoning(lmInput, container: container) {
+                        streamState.block = think
+                    }
                     var harmony = HarmonyParser()
+                    var firstChunkAt: ContinuousClock.Instant?
 
                     for await event in stream {
                         if Task.isCancelled { break }
                         switch event {
                         case .chunk(let text):
+                            if firstChunkAt == nil { firstChunkAt = .now }
                             if isHarmony {
                                 harmony.consume(text, into: continuation)
                             } else {
                                 Self.processStreamChunk(
                                     text,
                                     blocks: blocks,
-                                    buffer: &streamBuffer,
+                                    state: &streamState,
                                     continuation: continuation
                                 )
                             }
@@ -138,19 +189,19 @@ public actor MLXChatActor {
                                 name: call.function.name,
                                 argumentsJSON: argsJSON
                             ))
-                        case .info:
-                            // Token throughput / stop reason —
-                            // not surfaced upstream yet.
-                            break
+                        case .info(let info):
+                            continuation.yield(.metrics(Self.metrics(
+                                from: info,
+                                timeToFirstToken: firstChunkAt.map {
+                                    Self.seconds(generationStart.duration(to: $0))
+                                }
+                            )))
                         }
                     }
                     if isHarmony {
                         harmony.finish(into: continuation)
-                    } else if !streamBuffer.isEmpty {
-                        // Flush whatever remains: a leftover half-marker
-                        // that turned out to be literal text, or trailing
-                        // content. Emit as text so we don't swallow it.
-                        continuation.yield(.textDelta(streamBuffer))
+                    } else {
+                        Self.flushStreamState(&streamState, continuation: continuation)
                     }
                     lastUsedAt = Date()
                     scheduleIdleUnload()
@@ -185,6 +236,29 @@ public actor MLXChatActor {
     @MainActor
     static public func unloadAll() async {
         for actor in instances.values { await actor.unload() }
+    }
+
+    /// MLX's end-of-generation report, mapped onto the shared metrics
+    /// shape. It measures both phases itself — prefill and decode — so only
+    /// the latency to the first token is ours to time; nil when the round
+    /// emitted no chunk at all, a tool call straight out of the prompt.
+    public static func metrics(
+        from info: GenerateCompletionInfo,
+        timeToFirstToken: TimeInterval?
+    ) -> GenerationMetrics {
+        var metrics = GenerationMetrics()
+        metrics.promptTokens = info.promptTokenCount
+        metrics.completionTokens = info.generationTokenCount
+        metrics.promptDuration = info.promptTime
+        metrics.generationDuration = info.generateTime
+        metrics.timeToFirstToken = timeToFirstToken
+        return metrics
+    }
+
+    /// `Duration` as plain seconds, for the metrics fields.
+    private static func seconds(_ d: Duration) -> Double {
+        let c = d.components
+        return Double(c.seconds) + Double(c.attoseconds) * 1e-18
     }
 
     // MARK: - Memory probe
@@ -269,6 +343,9 @@ public actor MLXChatActor {
         if let localDir, !Self.hasChatTemplate(in: localDir) {
             throw ChatError.missingChatTemplate(modelID: modelID)
         }
+        let template = localDir.flatMap(Self.chatTemplateText(in:)) ?? ""
+        templateReadsReasoningEffort = template.contains("reasoning_effort")
+        templateUsesXHigh = template.contains("xhigh")
 
         // Route on the catalog flag: VLM entries go through
         // VLMModelFactory (which knows about vision towers +
@@ -375,6 +452,33 @@ public actor MLXChatActor {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
         return obj["chat_template"] != nil
+    }
+
+    /// The model's chat template as text, from whichever of the two places
+    /// carries it. Used to find out which knobs the template actually reads.
+    private static func chatTemplateText(in dir: URL) -> String? {
+        let jinja = dir.appendingPathComponent("chat_template.jinja")
+        if let text = try? String(contentsOf: jinja, encoding: .utf8) {
+            return text
+        }
+        let tcURL = dir.appendingPathComponent("tokenizer_config.json")
+        guard let data = try? Data(contentsOf: tcURL),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return obj["chat_template"] as? String
+    }
+
+    /// The Jinja context carrying the chosen reasoning effort, or `nil` when
+    /// there is nothing to say. Sent only to templates that read the key —
+    /// Qwen 3.5 accepts `low | medium | xhigh` and raises on anything else,
+    /// gpt-oss wants `low | medium | high`, so the top level is spelled the
+    /// way this model's template spells it.
+    private func reasoningEffortContext(
+        _ effort: ReasoningEffort
+    ) -> [String: any Sendable]? {
+        guard effort != .auto, templateReadsReasoningEffort else { return nil }
+        let value = (effort == .high && templateUsesXHigh) ? "xhigh" : effort.rawValue
+        return ["reasoning_effort": value]
     }
 
     /// True when the downloaded `config.json` declares a vision tower.
@@ -562,81 +666,144 @@ public actor MLXChatActor {
         StreamBlock(opens: ["<think>"], closes: ["</think>"], kind: .reasoning),
     ]
 
-    /// Streaming-aware marker stripper. The active block (if any) is
-    /// encoded in the buffer's prefix — when the buffer starts with one
-    /// of the known open markers, we're inside that block. No separate
-    /// state variable needed. `blocks` is the marker set for the current
-    /// model (Gemma 4 envelopes, or generic `<think>` tags).
+    /// True when the rendered prompt already opened a `<think>` block that
+    /// it never closed — the model will emit only the closing tag. Read off
+    /// the tokenised prompt rather than guessed from the model id: it is
+    /// what the model is actually conditioned on, and it covers every
+    /// family that prefills the marker (Qwen 3.5, DeepSeek-R1, GLM) without
+    /// a list to keep up to date. Sixteen tokens cover both
+    /// `<|im_start|>assistant\n<think>\n` and the thinking-disabled form
+    /// `<think>\n\n</think>\n\n`, which must read as *not* open.
+    private static func promptOpensReasoning(
+        _ input: LMInput,
+        container: ModelContainer
+    ) async -> Bool {
+        let tokens = input.text.tokens.reshaped(-1).asArray(Int.self)
+        guard !tokens.isEmpty else { return false }
+        let tail = Array(tokens.suffix(16))
+        let text = await container.perform { ctx in
+            ctx.tokenizer.decode(tokenIds: tail)
+        }
+        guard let open = text.range(of: "<think>", options: .backwards) else { return false }
+        if let close = text.range(of: "</think>", options: .backwards),
+           close.lowerBound > open.lowerBound {
+            return false
+        }
+        return true
+    }
+
+    /// Streaming parser state: the pending buffer plus the block we are
+    /// currently inside, if any. Explicit rather than inferred from the
+    /// buffer's prefix, because the block can be *pre-opened*: Qwen 3.5
+    /// (and the DeepSeek-R1 distills) put the `<think>` marker in the
+    /// generation prompt itself, so the model only ever emits the closing
+    /// tag. It also lets a reasoning block flush out as it streams instead
+    /// of being held whole until its close marker arrives.
+    private struct StreamState {
+        var buffer = ""
+        var block: StreamBlock?
+        /// The marker that opened `block`, replayed in the raw span when a
+        /// tool call fails to parse. Empty when the block was pre-opened.
+        var openMarker = ""
+        /// True once the active reasoning block emitted a delta — only the
+        /// first slice gets its leading whitespace trimmed.
+        var reasoningStarted = false
+    }
+
+    /// Streaming-aware marker stripper. `blocks` is the marker set for the
+    /// current model (Gemma 4 envelopes, or generic `<think>` tags).
     private static func processStreamChunk(
         _ text: String,
         blocks: [StreamBlock],
-        buffer: inout String,
+        state: inout StreamState,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) {
         let allOpens = blocks.flatMap(\.opens)
         let maxOpenLen = allOpens.map(\.count).max() ?? 0
-        buffer += text
+        state.buffer += text
 
         // Process the buffer repeatedly until no transition is
         // possible (handles edge cases like multiple tool calls or
         // a tool call sandwiched between text in one chunk).
         while true {
-            // Figure out whether we're already inside a block (the
-            // buffer starts with one of the known open markers).
-            var activeBlock: (StreamBlock, String)? = nil
-            for block in blocks {
-                for open in block.opens where buffer.hasPrefix(open) {
-                    activeBlock = (block, open)
-                    break
-                }
-                if activeBlock != nil { break }
-            }
-
-            if let (block, openMarker) = activeBlock {
+            if let block = state.block {
                 // Inside a block — look for the earliest of its close
                 // markers (an envelope may accept several wire formats).
                 var closeRange: Range<String.Index>? = nil
                 for close in block.closes {
-                    if let range = buffer.range(of: close),
+                    if let range = state.buffer.range(of: close),
                        closeRange == nil || range.lowerBound < closeRange!.lowerBound {
                         closeRange = range
                     }
                 }
                 guard let closeRange else {
-                    // No close yet; keep buffering.
+                    // No close yet. Reasoning goes out as it comes so the
+                    // "Réflexion" panel fills while the model thinks —
+                    // holding it back would leave an empty bubble for as
+                    // long as the chain of thought runs. Tool calls and
+                    // suppressed envelopes must stay atomic, so they wait.
+                    if block.kind == .reasoning {
+                        let maxCloseLen = block.closes.map(\.count).max() ?? 0
+                        if state.buffer.count > maxCloseLen {
+                            let safeEnd = state.buffer.index(
+                                state.buffer.endIndex, offsetBy: -maxCloseLen)
+                            emitReasoning(
+                                String(state.buffer[..<safeEnd]),
+                                closing: false,
+                                state: &state,
+                                continuation: continuation
+                            )
+                            state.buffer = String(state.buffer[safeEnd...])
+                        }
+                    }
                     return
                 }
-                let payloadStart = buffer.index(buffer.startIndex, offsetBy: openMarker.count)
-                let payload = String(buffer[payloadStart..<closeRange.lowerBound])
-                emitStreamBlock(block.kind, payload: payload, raw: String(buffer[..<closeRange.upperBound]), continuation: continuation)
-                buffer = String(buffer[closeRange.upperBound...])
+                let payload = String(state.buffer[..<closeRange.lowerBound])
+                let raw = state.openMarker + String(state.buffer[..<closeRange.upperBound])
+                emitStreamBlock(
+                    block.kind,
+                    payload: payload,
+                    raw: raw,
+                    state: &state,
+                    continuation: continuation
+                )
+                state.buffer = String(state.buffer[closeRange.upperBound...])
+                state.block = nil
+                state.openMarker = ""
+                state.reasoningStarted = false
             } else {
                 // Outside any block — scan for the earliest open
                 // marker of any kind.
-                var earliest: Range<String.Index>? = nil
-                for open in allOpens {
-                    if let range = buffer.range(of: open) {
-                        if earliest == nil || range.lowerBound < earliest!.lowerBound {
-                            earliest = range
+                var earliest: (range: Range<String.Index>, block: StreamBlock, marker: String)? = nil
+                for block in blocks {
+                    for open in block.opens {
+                        if let range = state.buffer.range(of: open) {
+                            if earliest == nil || range.lowerBound < earliest!.range.lowerBound {
+                                earliest = (range, block, open)
+                            }
                         }
                     }
                 }
-                if let openRange = earliest {
-                    let prefix = String(buffer[..<openRange.lowerBound])
+                if let found = earliest {
+                    let prefix = String(state.buffer[..<found.range.lowerBound])
                     if !prefix.isEmpty {
                         continuation.yield(.textDelta(prefix))
                     }
-                    buffer = String(buffer[openRange.lowerBound...])
+                    state.buffer = String(state.buffer[found.range.upperBound...])
+                    state.block = found.block
+                    state.openMarker = found.marker
+                    state.reasoningStarted = false
                 } else {
                     // No open marker. Emit everything except a tail
                     // big enough to hide a split-across-chunks marker.
-                    if buffer.count > maxOpenLen {
-                        let safeEnd = buffer.index(buffer.endIndex, offsetBy: -maxOpenLen)
-                        let safe = String(buffer[..<safeEnd])
+                    if state.buffer.count > maxOpenLen {
+                        let safeEnd = state.buffer.index(
+                            state.buffer.endIndex, offsetBy: -maxOpenLen)
+                        let safe = String(state.buffer[..<safeEnd])
                         if !safe.isEmpty {
                             continuation.yield(.textDelta(safe))
                         }
-                        buffer = String(buffer[safeEnd...])
+                        state.buffer = String(state.buffer[safeEnd...])
                     }
                     return
                 }
@@ -644,11 +811,37 @@ public actor MLXChatActor {
         }
     }
 
+    /// Flushes what's left when the stream ends: a leftover half-marker
+    /// that turned out to be literal text, trailing content, or — when
+    /// generation was cut off mid-block — the unterminated block itself.
+    /// Routing by the active block matters: a truncated chain of thought
+    /// must stay reasoning instead of landing in the answer.
+    private static func flushStreamState(
+        _ state: inout StreamState,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) {
+        guard !state.buffer.isEmpty else { return }
+        let rest = state.buffer
+        state.buffer = ""
+        guard let block = state.block else {
+            continuation.yield(.textDelta(rest))
+            return
+        }
+        emitStreamBlock(
+            block.kind,
+            payload: rest,
+            raw: state.openMarker + rest,
+            state: &state,
+            continuation: continuation
+        )
+    }
+
     /// Routes a closed block to the right `StreamEvent`.
     private static func emitStreamBlock(
         _ kind: StreamBlockKind,
         payload: String,
         raw: String,
+        state: inout StreamState,
         continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
     ) {
         switch kind {
@@ -665,17 +858,36 @@ public actor MLXChatActor {
                 continuation.yield(.textDelta(raw))
             }
         case .reasoning:
-            // Discard the channel name, keep the content. The chat
-            // view drops `.reasoningDelta` from display but the next
-            // round can carry it through if the provider supports it.
-            let trimmed = payload.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                continuation.yield(.reasoningDelta(trimmed))
-            }
+            // Discard the channel name, keep the content. The chat view
+            // shows it in a collapsible panel and the next round can
+            // carry it through if the provider supports it.
+            emitReasoning(payload, closing: true, state: &state, continuation: continuation)
         case .suppress:
             // Eat the whole block silently.
             break
         }
+    }
+
+    /// Emits one slice of a `.reasoning` block. Whitespace is trimmed only
+    /// at the block's edges — the leading whitespace of the first slice,
+    /// the trailing whitespace of the closing one. Trimming every slice
+    /// would eat the spacing inside the chain of thought.
+    private static func emitReasoning(
+        _ slice: String,
+        closing: Bool,
+        state: inout StreamState,
+        continuation: AsyncThrowingStream<StreamEvent, Error>.Continuation
+    ) {
+        var out = slice
+        if !state.reasoningStarted {
+            out = String(out.drop(while: \.isWhitespace))
+        }
+        if closing {
+            while let last = out.last, last.isWhitespace { out.removeLast() }
+        }
+        guard !out.isEmpty else { return }
+        state.reasoningStarted = true
+        continuation.yield(.reasoningDelta(out))
     }
 
     // MARK: - Harmony (gpt-oss) streaming parser
@@ -857,14 +1069,21 @@ public actor MLXChatActor {
     /// the events it emits, so think / channel / tool routing can be
     /// asserted without a live model. `gemma == true` uses the Gemma 4
     /// marker set, otherwise the generic `<think>` set.
-    static public func collectStreamEventsForTests(_ chunks: [String], gemma: Bool) async -> [StreamEvent] {
+    /// `preOpenedThink` starts the parser inside the reasoning block, as
+    /// `promptOpensReasoning` does for a prompt that prefilled `<think>`.
+    static public func collectStreamEventsForTests(
+        _ chunks: [String],
+        gemma: Bool,
+        preOpenedThink: Bool = false
+    ) async -> [StreamEvent] {
         let blocks = gemma ? gemma4Blocks : thinkBlocks
         let stream = AsyncThrowingStream<StreamEvent, Error> { continuation in
-            var buffer = ""
+            var state = StreamState()
+            if preOpenedThink { state.block = blocks.first }
             for chunk in chunks {
-                processStreamChunk(chunk, blocks: blocks, buffer: &buffer, continuation: continuation)
+                processStreamChunk(chunk, blocks: blocks, state: &state, continuation: continuation)
             }
-            if !buffer.isEmpty { continuation.yield(.textDelta(buffer)) }
+            flushStreamState(&state, continuation: continuation)
             continuation.finish()
         }
         var events: [StreamEvent] = []
