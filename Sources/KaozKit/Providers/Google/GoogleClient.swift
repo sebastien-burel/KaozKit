@@ -9,16 +9,16 @@ public enum GoogleClientError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "Clé API Google manquante."
+            return "Google API key missing."
         case .network(let msg):
-            return "Erreur réseau : \(msg)"
+            return "Network error: \(msg)"
         case .http(let status, let body):
             if let body, !body.isEmpty {
-                return "Réponse HTTP \(status) : \(body)"
+                return "HTTP \(status): \(body)"
             }
-            return "Réponse HTTP \(status)."
+            return "HTTP \(status)."
         case .decoding(let msg):
-            return "Réponse inattendue : \(msg)"
+            return "Unexpected response: \(msg)"
         }
     }
 }
@@ -58,7 +58,7 @@ public struct GoogleClient: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw GoogleClientError.network(message: "réponse non-HTTP")
+            throw GoogleClientError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw GoogleClientError.http(status: http.statusCode)
@@ -110,7 +110,7 @@ public struct GoogleClient: Sendable {
                     }
 
                     guard let http = response as? HTTPURLResponse else {
-                        throw GoogleClientError.network(message: "réponse non-HTTP")
+                        throw GoogleClientError.network(message: "non-HTTP response")
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         var body = ""

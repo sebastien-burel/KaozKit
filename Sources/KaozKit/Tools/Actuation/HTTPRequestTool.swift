@@ -67,7 +67,7 @@ public struct HTTPRequestTool: Tool {
         }
         if let allowedHosts, let host = url.host,
            !allowedHosts.contains(where: { $0.caseInsensitiveCompare(host) == .orderedSame }) {
-            throw ToolError.execution(message: "host « \(host) » is not in the allowed list")
+            throw ToolError.execution(message: "host \"\(host)\" is not in the allowed list")
         }
 
         var request = URLRequest(url: url)
@@ -111,7 +111,7 @@ public struct HTTPRequestTool: Tool {
             }
             guard let json = (try? JSONSerialization.data(withJSONObject: result))
                 .flatMap({ String(data: $0, encoding: .utf8) }) else {
-                throw ToolError.execution(message: "http_request: réponse non sérialisable")
+                throw ToolError.execution(message: "http_request: response cannot be serialized")
             }
             return json
         } catch {

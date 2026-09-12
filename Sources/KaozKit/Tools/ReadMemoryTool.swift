@@ -38,16 +38,16 @@ public struct ReadMemoryTool: Tool {
 
         if let idString = args.id?.trimmingCharacters(in: .whitespaces), !idString.isEmpty {
             guard let id = UUID(uuidString: idString) else {
-                throw ToolError.invalidArguments(reason: "id invalide : \(idString)")
+                throw ToolError.invalidArguments(reason: "invalid id: \(idString)")
             }
             guard let memory = await store.memory(id: id) else {
-                throw ToolError.execution(message: "mémoire introuvable : \(idString)")
+                throw ToolError.execution(message: "memory not found: \(idString)")
             }
             return "\(memory.title)\n\(memory.content)"
         }
 
         let memories = await store.memories
-        guard !memories.isEmpty else { return "Aucune mémoire enregistrée." }
+        guard !memories.isEmpty else { return "No memories saved." }
         return memories
             .map { "## \($0.title)\n\($0.content)" }
             .joined(separator: "\n\n")

@@ -7,7 +7,7 @@ import KaozKit
 /// per-model `MLXChatActor`.
 public struct MLXLLMProvider: LLMProvider {
     public let id: String = "mlx"
-    public let displayName: String = "Sur ce Mac"
+    public let displayName: String = "On this Mac"
     public let modelID: String
     public let reasoningEffort: MLXChatActor.ReasoningEffort
 
@@ -29,8 +29,8 @@ public struct MLXLLMProvider: LLMProvider {
             return .ready
         }
         return .unavailable(reason: """
-        Modèle « \(modelID) » pas encore téléchargé. Va dans \
-        Réglages → Sur ce Mac → bouton « Télécharger ».
+        Model "\(modelID)" is not downloaded yet. Go to \
+        Settings → On this Mac → Download.
         """)
     }
 

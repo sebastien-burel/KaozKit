@@ -12,10 +12,10 @@ public enum AgentError: Error, LocalizedError {
 
     public var errorDescription: String? {
         switch self {
-        case .engineCreationFailed: return "Impossible de créer le moteur JavaScript."
-        case .evaluation(let m):    return "Erreur d'évaluation : \(m)"
+        case .engineCreationFailed: return "Cannot create the JavaScript engine."
+        case .evaluation(let m):    return "Evaluation error: \(m)"
         case .script(let m):        return m
-        case .timeout:              return "L'agent n'a pas terminé dans le délai imparti."
+        case .timeout:              return "The agent did not finish within the time limit."
         }
     }
 }

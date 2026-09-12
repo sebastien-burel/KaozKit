@@ -25,7 +25,7 @@ public struct ListMemoriesTool: Tool {
 
     public func execute(arguments: Data) async throws -> String {
         let memories = await store.memories
-        guard !memories.isEmpty else { return "Aucune mémoire enregistrée." }
+        guard !memories.isEmpty else { return "No memories saved." }
         return memories
             .map { "\($0.id.uuidString)\t\($0.title)" }
             .joined(separator: "\n")

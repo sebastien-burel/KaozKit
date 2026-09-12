@@ -68,24 +68,24 @@ public struct ReadFileTool: Tool {
             let fm = FileManager.default
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
-                throw ToolError.execution(message: "introuvable : \(args.path)")
+                throw ToolError.execution(message: "not found: \(args.path)")
             }
             guard !isDir.boolValue else {
-                throw ToolError.execution(message: "est un dossier, pas un fichier : \(args.path)")
+                throw ToolError.execution(message: "is a directory, not a file: \(args.path)")
             }
 
             let data: Data
             do {
                 data = try Data(contentsOf: url)
             } catch {
-                throw ToolError.execution(message: "lecture impossible : \(error.localizedDescription)")
+                throw ToolError.execution(message: "cannot read: \(error.localizedDescription)")
             }
 
             let slice = data.prefix(limit)
             guard let text = String(data: slice, encoding: .utf8) else {
-                throw ToolError.execution(message: "fichier non textuel (UTF-8) : \(args.path)")
+                throw ToolError.execution(message: "not a UTF-8 text file: \(args.path)")
             }
-            return data.count > limit ? text + "\n[tronqué]" : text
+            return data.count > limit ? text + "\n[truncated]" : text
         }
     }
 }

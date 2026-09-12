@@ -289,7 +289,7 @@ public actor MLXChatActor {
         let container = try await loadIfNeeded()
         let resident = MLX.Memory.activeMemory
 
-        let input = UserInput(chat: [.user("Présente-toi en une phrase.")])
+        let input = UserInput(chat: [.user("Introduce yourself in one sentence.")])
         let lmInput = try await container.prepare(input: input)
         let params = GenerateParameters(maxTokens: 64, temperature: 0.7)
         let stream = try await container.generate(input: lmInput, parameters: params)
@@ -418,20 +418,19 @@ public actor MLXChatActor {
                 // épinglée l'ignorait — dire « pas implémenté » envoyait chercher
                 // un autre runtime quand il suffisait de changer de version.
                 return """
-                « \(modelID) » utilise l'architecture « \(type) », que la \
-                version de mlx-swift-lm compilée ici n'implémente pas — le \
-                modèle n'est pas en cause, et re-télécharger n'y changera \
-                rien. Une version plus récente de mlx-swift-lm la connaît \
-                peut-être ; sinon, utilise ce modèle via un runtime qui la \
-                supporte (Ollama, LM Studio).
+                "\(modelID)" uses the "\(type)" architecture, which the \
+                version of mlx-swift-lm compiled here does not implement — \
+                the model is not at fault, and re-downloading will not \
+                change anything. A newer mlx-swift-lm may know it; \
+                otherwise, use this model through a runtime that supports \
+                it (Ollama, LM Studio).
                 """
             case .missingChatTemplate(let modelID):
                 return """
-                « \(modelID) » n'inclut pas de chat template \
-                (ni `chat_template` dans `tokenizer_config.json`, ni \
-                fichier `chat_template.jinja`). Ce modèle n'est pas \
-                utilisable tel quel — re-quantifie le repo en y incluant \
-                le template.
+                "\(modelID)" ships no chat template (neither \
+                `chat_template` in `tokenizer_config.json` nor a \
+                `chat_template.jinja` file). This model is not usable \
+                as-is — re-quantize the repo with the template included.
                 """
             }
         }

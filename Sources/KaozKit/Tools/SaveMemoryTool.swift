@@ -53,13 +53,13 @@ public struct SaveMemoryTool: Tool {
         }
         let content = args.content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !content.isEmpty else {
-            throw ToolError.invalidArguments(reason: "content ne peut pas être vide")
+            throw ToolError.invalidArguments(reason: "content must not be empty")
         }
 
         let title = args.title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = (title?.isEmpty == false) ? title! : Self.deriveTitle(from: content)
         let memory = await store.add(title: resolvedTitle, content: content)
-        return "Mémorisé : « \(memory.title) » (id \(memory.id.uuidString))."
+        return "Saved \"\(memory.title)\" (id \(memory.id.uuidString))."
     }
 
     /// Falls back to the first words of the content when no title is given.

@@ -24,9 +24,9 @@ export default {
   async run(args) {
     const cfg = globalThis.__toolConfig || {};
     const key = (cfg.braveApiKey || "").trim();
-    if (!key) throw new Error("clé API Brave manquante (réglages → Outils)");
+    if (!key) throw new Error("Brave API key missing (Settings → Tools)");
     const query = String((args && args.query) || "").trim();
-    if (!query) throw new Error("query ne peut pas être vide");
+    if (!query) throw new Error("query must not be empty");
     const count = Math.min(Math.max((args && args.count) || 5, 1), 20);
 
     const base = (cfg.braveBaseURL || "https://api.search.brave.com").replace(/\/+$/, "");
@@ -40,7 +40,7 @@ export default {
 
     let data; try { data = JSON.parse(res.text); } catch (e) { data = {}; }
     const results = (data.web && data.web.results) || [];
-    if (!results.length) return "Aucun résultat.";
+    if (!results.length) return "No results.";
     return results.slice(0, count).map((r, i) =>
       (i + 1) + ". " + (r.title || "(sans titre)") + "\n" + (r.url || "") + "\n" + (r.description || "")
     ).join("\n\n");

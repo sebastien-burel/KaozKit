@@ -17,12 +17,12 @@ public struct GoogleProvider: LLMProvider {
 
     public func availability() async -> ProviderAvailability {
         guard !apiKey.isEmpty else {
-            return .unavailable(reason: "Renseignez votre clé API Google AI Studio dans les réglages.")
+            return .unavailable(reason: "Enter your Google AI Studio API key in Settings.")
         }
         do {
             let models = try await client.listModels()
             guard models.contains(where: { $0.id == model }) else {
-                return .unavailable(reason: "Le modèle « \(model) » n'est pas accessible avec cette clé.")
+                return .unavailable(reason: "Model \"\(model)\" is not accessible with this key.")
             }
             return .ready
         } catch let error as GoogleClientError {

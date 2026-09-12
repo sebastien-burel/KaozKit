@@ -40,7 +40,7 @@ export function runAgent(params) {
   import(path)
     .then((ns) => {
       const run = (ns && (ns.run || ns.default)) || globalThis.run;
-      if (typeof run !== "function") throw new Error("l'agent ne définit pas run(input)");
+      if (typeof run !== "function") throw new Error("the agent does not export run(input)");
       return run(input);
     })
     .then((r) => { host.__report(JSON.stringify(r === undefined ? null : r)); })
@@ -82,7 +82,7 @@ export function deliver(params) {
         fn = a.onRestore || (() => null);
       }
       if (typeof fn !== "function")
-        throw new Error("l'agent n'a pas de handler pour '" + kind + "'");
+        throw new Error("the agent has no handler for '" + kind + "'");
       return fn.call(a, input);
     })
     .then((r) => {

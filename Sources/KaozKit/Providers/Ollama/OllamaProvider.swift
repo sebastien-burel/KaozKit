@@ -19,10 +19,10 @@ public struct OllamaProvider: LLMProvider {
         do {
             let models = try await client.listModels()
             guard !models.isEmpty else {
-                return .unavailable(reason: "Le serveur ne propose aucun modèle.")
+                return .unavailable(reason: "The server offers no model.")
             }
             guard models.contains(where: { $0.name == model }) else {
-                return .unavailable(reason: "Le modèle « \(model) » n'est pas installé sur ce serveur.")
+                return .unavailable(reason: "Model \"\(model)\" is not installed on this server.")
             }
             return .ready
         } catch let error as OllamaClientError {

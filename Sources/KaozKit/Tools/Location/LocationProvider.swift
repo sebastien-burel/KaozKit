@@ -11,9 +11,9 @@ enum LocationError: Error, LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .denied:
-            return "Accès à la localisation refusé. Autorisez TyKaoz dans Réglages système → Confidentialité → Localisation."
+            return "Location access denied. Allow TyKaoz in System Settings → Privacy & Security → Location Services."
         case .restricted:
-            return "Accès à la localisation restreint par la configuration de l'appareil."
+            return "Location access is restricted by the device configuration."
         case .unavailable(let message):
             return "Localisation indisponible : \(message)"
         }
@@ -40,20 +40,19 @@ struct LocationFixSignals: OptionSet, Sendable {
             // Asking again is worth it: the session stays warm, so a fix that
             // lands after this timeout serves the next call immediately.
             return """
-            le système n'a pas encore de position. Un Mac n'a pas de GPS : il \
-            se repère en triangulant les réseaux Wi-Fi alentour, et là où ils \
-            sont peu nombreux le calcul échoue souvent ou demande plusieurs \
-            minutes. La recherche continue en arrière-plan — redemande un peu \
-            plus tard.
+            the system has no position yet. A Mac has no GPS: it locates \
+            itself by triangulating the Wi-Fi networks around it, and where \
+            they are few the fix often fails or takes several minutes. The \
+            search goes on in the background — ask again a little later.
             """
         }
         if contains(.authorizationRequestInProgress) {
-            return "autorisation en attente — réponds à la demande de macOS puis réessaie."
+            return "authorization pending — answer the macOS prompt, then retry."
         }
         if contains(.insufficientlyInUse) {
-            return "macOS considère l'app inactive — mets TyKaoz au premier plan et réessaie."
+            return "macOS considers the app inactive — bring TyKaoz to the front, then retry."
         }
-        return "aucun fix obtenu dans le délai imparti"
+        return "no fix within the time limit"
     }
 }
 
@@ -132,8 +131,8 @@ public final class AppleLocationProvider: NSObject, CLLocationManagerDelegate, L
         }.value
         guard servicesEnabled else {
             throw LocationError.unavailable(message: """
-                le service de localisation est désactivé — active-le dans \
-                Réglages système → Confidentialité et sécurité → Localisation.
+                Location Services are off — turn them on in \
+                System Settings → Privacy & Security → Location Services.
                 """)
         }
 

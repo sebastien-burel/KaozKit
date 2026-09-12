@@ -40,7 +40,7 @@ public enum FileSpaceAccess {
         let requested = URL(fileURLWithPath: path)
         guard let root = containingRoot(for: requested, in: roots) else {
             throw ToolError.invalidArguments(
-                reason: "le chemin « \(path) » est hors des dossiers autorisés"
+                reason: "path \"\(path)\" is outside the authorized directories"
             )
         }
         let didStart = root.url.startAccessingSecurityScopedResource()

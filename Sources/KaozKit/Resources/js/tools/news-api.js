@@ -33,9 +33,9 @@ export default {
   async run(args) {
     const cfg = globalThis.__toolConfig || {};
     const key = (cfg.newsApiKey || "").trim();
-    if (!key) throw new Error("clé API NewsAPI manquante (NEWS_API_KEY)");
+    if (!key) throw new Error("NewsAPI key missing (NEWS_API_KEY)");
     const query = String((args && args.query) || "").trim();
-    if (!query) throw new Error("query ne peut pas être vide");
+    if (!query) throw new Error("query must not be empty");
     const count = Math.min(Math.max((args && args.count) || 5, 1), 100);
     const language = String((args && args.language) || "en");
 
@@ -48,7 +48,7 @@ export default {
     if (res.status < 200 || res.status >= 300) throw new Error("HTTP " + res.status);
 
     let data; try { data = JSON.parse(res.text); } catch (e) { data = {}; }
-    if (data.status !== "ok") throw new Error(data.message || "NewsAPI a refusé la requête");
+    if (data.status !== "ok") throw new Error(data.message || "NewsAPI rejected the request");
     return (data.articles || []).slice(0, count).map((a) => ({
       source: (a.source && a.source.name) || "NewsAPI",
       title: a.title || "",

@@ -27,11 +27,11 @@ public struct AppleIntelligenceProvider: LLMProvider {
         case .available:
             return .ready
         case .unavailable(.deviceNotEligible):
-            return .unavailable(reason: "Cet appareil ne prend pas en charge Apple Intelligence.")
+            return .unavailable(reason: "This device does not support Apple Intelligence.")
         case .unavailable(.appleIntelligenceNotEnabled):
-            return .unavailable(reason: "Activez Apple Intelligence dans les Réglages système.")
+            return .unavailable(reason: "Turn on Apple Intelligence in System Settings.")
         case .unavailable(.modelNotReady):
-            return .unavailable(reason: "Le modèle Apple Intelligence se télécharge ou n'est pas prêt.")
+            return .unavailable(reason: "The Apple Intelligence model is downloading or not ready.")
         case .unavailable(let other):
             return .unavailable(reason: "Indisponible : \(other).")
         }
@@ -85,7 +85,7 @@ public struct AppleIntelligenceProvider: LLMProvider {
     // MARK: - Transcript construction
 
     private static let defaultInstructions =
-        "Tu es un assistant utile. Réponds clairement et en français par défaut."
+        "You are a helpful assistant. Answer clearly, in the user's language."
 
     private static func buildTranscript(
         systemPrompt: String,
@@ -249,7 +249,7 @@ enum AppleIntelligenceError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noUserMessage:
-            return "Aucun message utilisateur à envoyer."
+            return "No user message to send."
         case .generation(let message):
             return message
         }

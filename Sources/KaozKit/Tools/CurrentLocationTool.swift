@@ -61,7 +61,7 @@ public struct CurrentLocationTool: Tool {
         do {
             location = try await provider.currentLocation()
         } catch let toolError as LocationError {
-            throw ToolError.execution(message: toolError.errorDescription ?? "Localisation impossible")
+            throw ToolError.execution(message: toolError.errorDescription ?? "location unavailable")
         } catch {
             throw ToolError.execution(message: error.localizedDescription)
         }
@@ -71,7 +71,7 @@ public struct CurrentLocationTool: Tool {
             "Longitude : \(formatted(location.coordinate.longitude))"
         ]
         if location.horizontalAccuracy >= 0 {
-            lines.append("Précision : ±\(Int(location.horizontalAccuracy.rounded())) m")
+            lines.append("Accuracy: ±\(Int(location.horizontalAccuracy.rounded())) m")
         }
         // A stale fix (the provider's last-known-position fallback) is
         // flagged so the model can qualify its answer.

@@ -45,7 +45,7 @@ public struct LocalOpenAIProvider: LLMProvider {
             let models = try await client.listModels()
             guard models.contains(where: { $0.id == model }) else {
                 return .unavailable(
-                    reason: "Le modèle « \(model) » n'est pas servi par ce serveur."
+                    reason: "Model \"\(model)\" is not served by this server."
                 )
             }
             return .ready

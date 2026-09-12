@@ -17,12 +17,12 @@ public struct AnthropicProvider: LLMProvider {
 
     public func availability() async -> ProviderAvailability {
         guard !apiKey.isEmpty else {
-            return .unavailable(reason: "Renseignez votre clé API Anthropic dans les réglages.")
+            return .unavailable(reason: "Enter your Anthropic API key in Settings.")
         }
         do {
             let models = try await client.listModels()
             guard models.contains(where: { $0.id == model }) else {
-                return .unavailable(reason: "Le modèle « \(model) » n'est pas accessible avec cette clé.")
+                return .unavailable(reason: "Model \"\(model)\" is not accessible with this key.")
             }
             return .ready
         } catch let error as AnthropicClientError {

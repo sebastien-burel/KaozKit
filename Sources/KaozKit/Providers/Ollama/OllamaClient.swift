@@ -9,16 +9,16 @@ public enum OllamaClientError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .invalidURL:
-            return "URL invalide."
+            return "Invalid URL."
         case .network(let message):
-            return "Erreur réseau : \(message)"
+            return "Network error: \(message)"
         case .http(let status, let body):
             if let body, !body.isEmpty {
-                return "Réponse HTTP \(status) : \(body)"
+                return "HTTP \(status): \(body)"
             }
-            return "Réponse HTTP \(status)."
+            return "HTTP \(status)."
         case .decoding(let message):
-            return "Réponse inattendue : \(message)"
+            return "Unexpected response: \(message)"
         }
     }
 }
@@ -46,7 +46,7 @@ public struct OllamaClient: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw OllamaClientError.network(message: "réponse non-HTTP")
+            throw OllamaClientError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw OllamaClientError.http(status: http.statusCode)
@@ -86,7 +86,7 @@ public struct OllamaClient: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw OllamaClientError.network(message: "réponse non-HTTP")
+            throw OllamaClientError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             let trimmed = String(data: data, encoding: .utf8)?
@@ -132,7 +132,7 @@ public struct OllamaClient: Sendable {
                     }
 
                     guard let http = response as? HTTPURLResponse else {
-                        throw OllamaClientError.network(message: "réponse non-HTTP")
+                        throw OllamaClientError.network(message: "non-HTTP response")
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         var raw = Data()

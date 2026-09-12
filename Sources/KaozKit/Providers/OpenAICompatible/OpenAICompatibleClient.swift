@@ -9,16 +9,16 @@ public enum OpenAICompatibleError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "Clé API manquante."
+            return "API key missing."
         case .network(let msg):
-            return "Erreur réseau : \(msg)"
+            return "Network error: \(msg)"
         case .http(let status, let body):
             if let body, !body.isEmpty {
-                return "Réponse HTTP \(status) : \(body)"
+                return "HTTP \(status): \(body)"
             }
-            return "Réponse HTTP \(status)."
+            return "HTTP \(status)."
         case .decoding(let msg):
-            return "Réponse inattendue : \(msg)"
+            return "Unexpected response: \(msg)"
         }
     }
 }
@@ -78,7 +78,7 @@ public struct OpenAICompatibleClient: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw OpenAICompatibleError.network(message: "réponse non-HTTP")
+            throw OpenAICompatibleError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             let body = String(data: data, encoding: .utf8)?
@@ -128,7 +128,7 @@ public struct OpenAICompatibleClient: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw OpenAICompatibleError.network(message: "réponse non-HTTP")
+            throw OpenAICompatibleError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw OpenAICompatibleError.http(status: http.statusCode)
@@ -200,7 +200,7 @@ public struct OpenAICompatibleClient: Sendable {
                     }
 
                     guard let http = response as? HTTPURLResponse else {
-                        throw OpenAICompatibleError.network(message: "réponse non-HTTP")
+                        throw OpenAICompatibleError.network(message: "non-HTTP response")
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         // Read the body so the user sees what the provider
@@ -470,7 +470,7 @@ public struct OpenAICompatibleClient: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw OpenAICompatibleError.network(message: "réponse non-HTTP")
+            throw OpenAICompatibleError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             let text = String(data: data, encoding: .utf8)?
@@ -497,7 +497,7 @@ public struct OpenAICompatibleClient: Sendable {
                 ? "image/jpeg" : "image/png"
             continuation.yield(.imageOutput(data: imageData, mimeType: mime))
         } else {
-            throw OpenAICompatibleError.decoding(message: "réponse image sans b64_json ni url")
+            throw OpenAICompatibleError.decoding(message: "image response has neither b64_json nor url")
         }
     }
 
@@ -535,7 +535,7 @@ public struct OpenAICompatibleClient: Sendable {
             throw OpenAICompatibleError.network(message: urlError.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else {
-            throw OpenAICompatibleError.network(message: "réponse non-HTTP")
+            throw OpenAICompatibleError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             let text = String(data: data, encoding: .utf8)?
@@ -547,7 +547,7 @@ public struct OpenAICompatibleClient: Sendable {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         guard let b64 = (json?["data"] as? [[String: Any]])?.first?["b64_json"] as? String,
               let imageData = Data(base64Encoded: b64) else {
-            throw OpenAICompatibleError.decoding(message: "réponse édition sans b64_json")
+            throw OpenAICompatibleError.decoding(message: "edit response has no b64_json")
         }
         continuation.yield(.imageOutput(data: imageData, mimeType: "image/png"))
     }
@@ -608,14 +608,14 @@ public struct OpenAICompatibleClient: Sendable {
         // Derive the native endpoint from the compatible-mode base URL
         // (same host, different path).
         guard let scheme = baseURL.scheme, let host = baseURL.host else {
-            throw OpenAICompatibleError.network(message: "URL de base invalide")
+            throw OpenAICompatibleError.network(message: "invalid base URL")
         }
         var components = URLComponents()
         components.scheme = scheme
         components.host = host
         components.path = "/api/v1/services/aigc/multimodal-generation/generation"
         guard let endpoint = components.url else {
-            throw OpenAICompatibleError.network(message: "URL DashScope invalide")
+            throw OpenAICompatibleError.network(message: "invalid DashScope URL")
         }
 
         var request = URLRequest(url: endpoint)
@@ -659,7 +659,7 @@ public struct OpenAICompatibleClient: Sendable {
             throw OpenAICompatibleError.network(message: urlError.localizedDescription)
         }
         guard let http = response as? HTTPURLResponse else {
-            throw OpenAICompatibleError.network(message: "réponse non-HTTP")
+            throw OpenAICompatibleError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             let text = String(data: data, encoding: .utf8)?
@@ -672,7 +672,7 @@ public struct OpenAICompatibleClient: Sendable {
 
         guard let urlString = Self.parseQwenImageURL(data),
               let imageURL = URL(string: urlString) else {
-            throw OpenAICompatibleError.decoding(message: "réponse image Qwen sans URL")
+            throw OpenAICompatibleError.decoding(message: "Qwen image response has no URL")
         }
 
         // Fetch the generated image (temporary signed URL).

@@ -32,11 +32,11 @@ public struct HTTPPluginTool: Tool {
         do {
             (data, response) = try await session.data(for: request)
         } catch let urlError as URLError {
-            throw ToolError.execution(message: "erreur réseau : \(urlError.localizedDescription)")
+            throw ToolError.execution(message: "network error: \(urlError.localizedDescription)")
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw ToolError.execution(message: "réponse non-HTTP")
+            throw ToolError.execution(message: "non-HTTP response")
         }
         let body = String(data: data, encoding: .utf8) ?? ""
         guard (200..<300).contains(http.statusCode) else {
@@ -45,7 +45,7 @@ public struct HTTPPluginTool: Tool {
         }
 
         return body.count > Self.maxResponseChars
-            ? String(body.prefix(Self.maxResponseChars)) + "\n[tronqué]"
+            ? String(body.prefix(Self.maxResponseChars)) + "\n[truncated]"
             : body
     }
 
@@ -65,7 +65,7 @@ public struct HTTPPluginTool: Tool {
 
         case .get:
             guard var components = URLComponents(url: resolvedURL, resolvingAgainstBaseURL: false) else {
-                throw ToolError.execution(message: "URL invalide")
+                throw ToolError.execution(message: "invalid URL")
             }
             // Append only the arguments not already consumed by {placeholders}
             // in the URL path/query.
@@ -77,7 +77,7 @@ public struct HTTPPluginTool: Tool {
                 components.queryItems = (components.queryItems ?? []) + items
             }
             guard let url = components.url else {
-                throw ToolError.execution(message: "construction d'URL impossible")
+                throw ToolError.execution(message: "cannot build the URL")
             }
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
@@ -93,7 +93,7 @@ public struct HTTPPluginTool: Tool {
         let withSecrets = PluginSecrets.substitute(in: definition.urlTemplate, secrets: secrets)
         let (filled, usedKeys) = PluginArguments.substitute(in: withSecrets, arguments: arguments)
         guard let url = URL(string: filled) else {
-            throw ToolError.execution(message: "URL invalide après substitution : \(filled)")
+            throw ToolError.execution(message: "invalid URL after substitution: \(filled)")
         }
         return (url, usedKeys)
     }

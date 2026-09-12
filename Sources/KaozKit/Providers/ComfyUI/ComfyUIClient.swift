@@ -14,20 +14,20 @@ public enum ComfyUIError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .network(let message):
-            return "Erreur réseau : \(message)"
+            return "Network error: \(message)"
         case .http(let status, let body):
             if let body, !body.isEmpty {
-                return "Réponse HTTP \(status) : \(body)"
+                return "HTTP \(status): \(body)"
             }
-            return "Réponse HTTP \(status)."
+            return "HTTP \(status)."
         case .validation(let message):
-            return "Workflow refusé par ComfyUI : \(message)"
+            return "Workflow rejected by ComfyUI: \(message)"
         case .missingPromptPlaceholder:
-            return "Le workflow ne contient pas le marqueur \(ComfyUIClient.promptPlaceholder)."
+            return "The workflow does not contain the \(ComfyUIClient.promptPlaceholder) marker."
         case .timeout:
-            return "La génération a dépassé le délai maximal."
+            return "Generation exceeded the time limit."
         case .decoding(let message):
-            return "Réponse inattendue : \(message)"
+            return "Unexpected response: \(message)"
         }
     }
 }
@@ -102,7 +102,7 @@ public struct ComfyUIClient: Sendable {
             throw ComfyUIError.missingPromptPlaceholder
         }
         guard let root = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] else {
-            throw ComfyUIError.decoding(message: "workflow JSON invalide")
+            throw ComfyUIError.decoding(message: "invalid workflow JSON")
         }
         // Marker defaults overlaid with the user's stored values.
         var resolved: [String: String] = [:]
@@ -110,7 +110,7 @@ public struct ComfyUIClient: Sendable {
         for (key, value) in params { resolved[key] = value }
 
         guard let transformed = transform(root, prompt: prompt, params: resolved, seed: seed) as? [String: Any] else {
-            throw ComfyUIError.decoding(message: "workflow JSON invalide")
+            throw ComfyUIError.decoding(message: "invalid workflow JSON")
         }
         return transformed
     }
@@ -211,7 +211,7 @@ public struct ComfyUIClient: Sendable {
     /// validation failure. Pure — unit-tested directly.
     public static func parseSubmitResponse(_ data: Data) throws -> String {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
-            throw ComfyUIError.decoding(message: "réponse /prompt illisible")
+            throw ComfyUIError.decoding(message: "unreadable /prompt response")
         }
         if let nodeErrors = obj["node_errors"] as? [String: Any], !nodeErrors.isEmpty {
             throw ComfyUIError.validation(message: describe(nodeErrors))
@@ -220,7 +220,7 @@ public struct ComfyUIClient: Sendable {
             throw ComfyUIError.validation(message: describe(error))
         }
         guard let id = obj["prompt_id"] as? String, !id.isEmpty else {
-            throw ComfyUIError.decoding(message: "prompt_id manquant")
+            throw ComfyUIError.decoding(message: "prompt_id missing")
         }
         return id
     }
@@ -320,7 +320,7 @@ public struct ComfyUIClient: Sendable {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
-                throw ComfyUIError.network(message: "réponse non-HTTP")
+                throw ComfyUIError.network(message: "non-HTTP response")
             }
             return (data, http)
         } catch let urlError as URLError {

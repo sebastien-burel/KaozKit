@@ -28,19 +28,19 @@ public final class MLXModelStore {
             case .insufficientDiskSpace(let needed, let available):
                 let need = ByteCountFormatter.string(fromByteCount: needed, countStyle: .file)
                 let have = ByteCountFormatter.string(fromByteCount: available, countStyle: .file)
-                return "Pas assez d'espace disque (besoin : \(need), dispo : \(have))."
+                return "Not enough disk space (needed: \(need), available: \(have))."
             case .downloadFailed(let modelID, let err):
                 if MLXModelStore.isTransientNetworkError(err) {
                     return """
-                    Échec du téléchargement de « \(modelID) » : \
-                    connexion réseau interrompue. Réessaie — le \
-                    téléchargement reprend où il s'est arrêté.
+                    Download of "\(modelID)" failed: the network \
+                    connection dropped. Retry — the download resumes \
+                    where it stopped.
                     """
                 }
                 return """
-                Échec du téléchargement de « \(modelID) » : \
-                \(err.localizedDescription). Vérifie que le slug est \
-                un repo HuggingFace valide (ex : \
+                Download of "\(modelID)" failed: \
+                \(err.localizedDescription). Check that the slug is a \
+                valid HuggingFace repo (e.g. \
                 `mlx-community/bge-m3-mlx-4bit`).
                 """
             }
@@ -247,7 +247,7 @@ public final class MLXModelStore {
                 underlying: NSError(
                     domain: "MLXModelStore",
                     code: 0,
-                    userInfo: [NSLocalizedDescriptionKey: "Modèle introuvable après téléchargement."]
+                    userInfo: [NSLocalizedDescriptionKey: "Model not found after download."]
                 )
             )
         }

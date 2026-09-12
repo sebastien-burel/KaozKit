@@ -55,10 +55,10 @@ public struct EditFileTool: Tool {
         }
         return try FileSpaceAccess.withScopedAccess(to: args.path, roots: roots) { url in
             guard var content = try? String(contentsOf: url, encoding: .utf8) else {
-                throw ToolError.execution(message: "cannot read « \(url.path) » as UTF-8 text")
+                throw ToolError.execution(message: "cannot read \"\(url.path)\" as UTF-8 text")
             }
             guard content.contains(args.oldString) else {
-                throw ToolError.execution(message: "old_string not found in « \(url.path) »")
+                throw ToolError.execution(message: "old_string not found in \"\(url.path)\"")
             }
             if args.replaceAll == true {
                 content = content.replacingOccurrences(of: args.oldString, with: args.newString)

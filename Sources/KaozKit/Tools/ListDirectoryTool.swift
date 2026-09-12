@@ -64,10 +64,10 @@ public struct ListDirectoryTool: Tool {
             let fm = FileManager.default
             var isDir: ObjCBool = false
             guard fm.fileExists(atPath: url.path, isDirectory: &isDir) else {
-                throw ToolError.execution(message: "introuvable : \(path)")
+                throw ToolError.execution(message: "not found: \(path)")
             }
             guard isDir.boolValue else {
-                throw ToolError.execution(message: "n'est pas un dossier : \(path)")
+                throw ToolError.execution(message: "not a directory: \(path)")
             }
             return args.recursive == true
                 ? Self.listRecursive(url, fm: fm)
@@ -127,7 +127,7 @@ public struct ListDirectoryTool: Tool {
             at: base,
             includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
             options: [.skipsHiddenFiles]
-        ) else { return "(dossier vide)" }
+        ) else { return "(empty directory)" }
 
         let basePath = base.path
         var listed: [[String: Any]] = []

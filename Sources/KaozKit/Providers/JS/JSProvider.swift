@@ -61,7 +61,7 @@ public final class JSProvider: LLMProvider, @unchecked Sendable {
     public func availability() async -> ProviderAvailability {
         (config["apiKey"] as? String)?.isEmpty == false
             ? .ready
-            : .unavailable(reason: "clé API manquante pour \(displayName).")
+            : .unavailable(reason: "API key missing for \(displayName).")
     }
 
     public func chat(

@@ -37,11 +37,11 @@ public struct ComfyUIProvider: LLMProvider {
     public func availability() async -> ProviderAvailability {
         guard workflowJSON.contains(ComfyUIClient.promptPlaceholder) else {
             return .unavailable(
-                reason: "Le workflow « \(workflowName) » ne contient pas le marqueur \(ComfyUIClient.promptPlaceholder)."
+                reason: "Workflow \"\(workflowName)\" does not contain the \(ComfyUIClient.promptPlaceholder) marker."
             )
         }
         if await client.systemStatsReachable() { return .ready }
-        return .unavailable(reason: "Serveur ComfyUI injoignable à \(baseURL.absoluteString).")
+        return .unavailable(reason: "ComfyUI server unreachable at \(baseURL.absoluteString).")
     }
 
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {

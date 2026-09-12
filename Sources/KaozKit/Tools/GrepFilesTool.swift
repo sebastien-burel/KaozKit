@@ -71,7 +71,7 @@ public struct GrepFilesTool: Tool {
             )
         }
         guard !args.pattern.isEmpty else {
-            throw ToolError.invalidArguments(reason: "pattern ne peut pas être vide")
+            throw ToolError.invalidArguments(reason: "pattern must not be empty")
         }
 
         let limit = min(args.maxResults ?? Self.defaultMaxResults, Self.hardMaxResults)
@@ -85,7 +85,7 @@ public struct GrepFilesTool: Tool {
         }
 
         guard !roots.isEmpty else {
-            throw ToolError.execution(message: "aucun dossier autorisé")
+            throw ToolError.execution(message: "no authorized directory")
         }
         var all: [String] = []
         for root in roots {
@@ -131,7 +131,7 @@ public struct GrepFilesTool: Tool {
     private func format(_ matches: [String], limit: Int) -> String {
         if matches.isEmpty { return "Aucune correspondance." }
         let capped = matches.prefix(limit)
-        let suffix = matches.count > limit ? "\n… (au moins \(limit) correspondances, résultat limité)" : ""
+        let suffix = matches.count > limit ? "\n… (at least \(limit) matches, output capped)" : ""
         return capped.joined(separator: "\n") + suffix
     }
 

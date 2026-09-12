@@ -47,10 +47,10 @@ public enum PluginError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidJSON:           return "Le fichier n'est pas un JSON valide."
-        case .missingField(let f):   return "Champ manquant ou invalide : « \(f) »."
-        case .noTools:               return "Le manifeste ne déclare aucun outil."
-        case .invalidURL(let u):     return "URL invalide (http/https requis) : \(u)."
+        case .invalidJSON:           return "The file is not valid JSON."
+        case .missingField(let f):   return "Missing or invalid field \"\(f)\"."
+        case .noTools:               return "The manifest declares no tool."
+        case .invalidURL(let u):     return "Invalid URL (http/https required): \(u)."
         }
     }
 }

@@ -47,8 +47,8 @@ let nextTick = 0;
 function armed(handle, delayMs) {
   if (handle) return handle;
   throw new Error(
-    "aucun timer armé (" + delayMs + " ms) : host.schedule est inerte hors mode "
-    + "résident — lancer kaoz avec --resident");
+    "no timer armed (" + delayMs + " ms): host.schedule is inert outside "
+    + "resident mode — run kaoz with --resident");
 }
 
 function arm(native_fn, delayMs, fnOrPayload, repeating) {
@@ -79,7 +79,7 @@ export function __dispatchTick(payload) {
   const id = payload && payload.__kaozTick;
   if (id === undefined) return false;
   const entry = pending.get(id);
-  if (!entry) return true;                    // annulé entre-temps : rien à faire
+  if (!entry) return true;                    // cancelled in the meantime: nothing to do
   if (!entry.repeating) pending.delete(id);
   entry.fn();
   return true;

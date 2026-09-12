@@ -52,7 +52,7 @@ struct OpenAIResponsesClient {
 
                     let (bytes, response) = try await session.bytes(for: request)
                     guard let http = response as? HTTPURLResponse else {
-                        throw OpenAICompatibleError.network(message: "réponse non-HTTP")
+                        throw OpenAICompatibleError.network(message: "non-HTTP response")
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         // The body carries OpenAI's explanation; drain it so the
@@ -184,7 +184,7 @@ struct OpenAIResponsesClient {
         case "response.failed", "error":
             let response = obj["response"] as? [String: Any]
             let error = (response?["error"] as? [String: Any]) ?? (obj["error"] as? [String: Any])
-            return .failed((error?["message"] as? String) ?? "la génération a échoué")
+            return .failed((error?["message"] as? String) ?? "generation failed")
 
         default:
             return nil

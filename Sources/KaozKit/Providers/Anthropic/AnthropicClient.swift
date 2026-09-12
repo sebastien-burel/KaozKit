@@ -9,16 +9,16 @@ public enum AnthropicClientError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .missingAPIKey:
-            return "Clé API Anthropic manquante."
+            return "Anthropic API key missing."
         case .network(let msg):
-            return "Erreur réseau : \(msg)"
+            return "Network error: \(msg)"
         case .http(let status, let body):
             if let body, !body.isEmpty {
-                return "Réponse HTTP \(status) : \(body)"
+                return "HTTP \(status): \(body)"
             }
-            return "Réponse HTTP \(status)."
+            return "HTTP \(status)."
         case .decoding(let msg):
-            return "Réponse inattendue : \(msg)"
+            return "Unexpected response: \(msg)"
         }
     }
 }
@@ -66,7 +66,7 @@ public struct AnthropicClient: Sendable {
         }
 
         guard let http = response as? HTTPURLResponse else {
-            throw AnthropicClientError.network(message: "réponse non-HTTP")
+            throw AnthropicClientError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
             throw AnthropicClientError.http(status: http.statusCode)
@@ -110,7 +110,7 @@ public struct AnthropicClient: Sendable {
                     }
 
                     guard let http = response as? HTTPURLResponse else {
-                        throw AnthropicClientError.network(message: "réponse non-HTTP")
+                        throw AnthropicClientError.network(message: "non-HTTP response")
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         var body = ""
