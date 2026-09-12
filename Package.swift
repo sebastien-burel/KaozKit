@@ -150,7 +150,10 @@ let package = Package(
         // The engine regression suite (multi-phase harness / demo).
         .executableTarget(
             name: "KaozJSTests",
-            dependencies: ["KaozJS", "KaozJSCore", "KaozJSTestC"]
+            dependencies: ["KaozJS", "KaozJSCore", "KaozJSTestC"],
+            // The JS fixtures the phases drive, found through Bundle.module so
+            // the harness runs from any working directory.
+            resources: [.copy("fixtures")]
         ),
     ]
 )

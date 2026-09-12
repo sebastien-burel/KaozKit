@@ -332,7 +332,7 @@ swift run -c release KaozJSTests        # engine regression suite; non-zero exit
 swift run -c release kaoz demo/weather.js --provider anthropic --input '{"question":"…"}'
 ```
 
-`KaozJSTests` is a multi-phase CLI harness whose demo host doubles as the engine regression suite; the JS fixtures it drives live in `agents/`.
+`KaozJSTests` is a multi-phase CLI harness whose demo host doubles as the engine regression suite; the JS fixtures it drives live in `Sources/KaozJSTests/fixtures/`, shipped as a resource of the target.
 
 > **If a build hangs at 0 % CPU with no error**, a stale macro-plugin binary in `.build` is the likely cause: `KaozMLX` expands the `mlx-swift-lm` macros (`#hubDownloader()`, `#huggingFaceTokenizerLoader()`) through a plugin executable, and once that binary is left corrupt — by an interrupted build, say — every later compile reuses it and waits forever on a process that answers nothing. SwiftPM never rebuilds it on its own. `rm -rf .build` clears it; re-run `scripts/link-mlx-metallib.sh` afterwards, since the Metal library lives there too.
 

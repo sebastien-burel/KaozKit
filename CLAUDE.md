@@ -178,8 +178,8 @@ Sources/
     demoHost.c                 # print (+capture) + host.echo/stream/fail/add — xsServicePromise + @_cdecl calls into Swift
   KaozJSTests/            # Swift executable: engine regression harness
     DemoHost.swift             # Swift side of the demo host: @_cdecl entry points (regression suite)
-    main.swift                 # runs the test agents, asserts, exits non-zero on any failure
-agents/                   # engine JS fixtures: echo.js, stream.js, concurrent.js, error.js, sequential.js, modules/
+    main.swift                 # runs the fixtures, asserts, exits non-zero on any failure
+    fixtures/                  # engine JS fixtures (a Bundle.module resource): echo.js, stream.js, concurrent.js, error.js, sequential.js, modules/
 scripts/link-moddable.sh  # links the curated XS source subset from $MODDABLE into Sources/KaozJSCore/xs/
 scripts/link-mlx-metallib.sh  # copies MLX's default.metallib next to the CLI build so `kaoz --provider mlx` works
 ```
@@ -340,7 +340,7 @@ listening (`XSBUG_HOST`/`XSBUG_PORT` override; nothing to pass to `kaoz`). xsdb 
 command-line variant, `node $MODDABLE/tools/xsbug-log/xsbug-log.js`, same port. A
 `debugger;` in an agent stops it there; each machine shows up separately, by name. The
 demos live in `demo/` (`hello.js` — no key, `weather.js`, `resident-checkpoint.js`);
-`agents/` is the harness's engine fixtures, not a place for agents.
+the engine fixtures live under `Sources/KaozJSTests/fixtures/` and are not agents.
 
 ## Critical invariants (must always hold)
 
@@ -380,7 +380,7 @@ swift run -c release kaoz agent.js --provider anthropic --input '{"question":"�
 `KaozJSTests/main.swift` runs each engine fixture, asserts its criterion, and exits non-zero
 on failure — designed for CI and non-interactive Claude Code runs. There is no separate test
 framework; the harness *is* the engine test suite. To exercise a single behaviour, run the
-corresponding fixture in `agents/` from the harness. `kaoz` runs a real agent (secrets from
+corresponding fixture in `Sources/KaozJSTests/fixtures/` from the harness. `kaoz` runs a real agent (secrets from
 the environment). For `kaoz --provider mlx`, run `scripts/link-mlx-metallib.sh` once after
 building (the Metal library isn't produced by a plain `swift build`).
 

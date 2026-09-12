@@ -1,4 +1,4 @@
-// Phase 5 agent: mixed sequential calls (echo then stream) in one agent,
+// Phase 5 fixture: mixed sequential calls (echo then stream) in one fixture,
 // exercising distinct ids back to back with no crosstalk.
 (async () => {
   const a = await host.echo("first");

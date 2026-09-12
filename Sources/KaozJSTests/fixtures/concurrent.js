@@ -1,4 +1,4 @@
-// Phase 5 agent: several async calls in flight at once. Promise.all preserves
+// Phase 5 fixture: several async calls in flight at once. Promise.all preserves
 // input order regardless of completion order, so any id crosstalk would show.
 (async () => {
   const r = await Promise.all([

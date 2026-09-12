@@ -8,6 +8,11 @@ import KaozJSTestC // C side of the demo host (installs host.*)
 import Darwin
 import Foundation
 
+/// The engine fixtures (`echo.js`, `stream.js`, …), shipped as a resource of
+/// this target so the harness does not depend on the working directory.
+let fixtures = Bundle.module.resourceURL!.appending(path: "fixtures")
+func fixture(_ name: String) -> String { fixtures.appending(path: name).path }
+
 // Test instrumentation over the flat C API — not part of the consumer surface
 // of KaozJS, so it lives here, built on withMachine + pendingCount.
 extension XSEngine {
@@ -224,9 +229,9 @@ do {
     let before = failures
     print("PHASE 3 — async bridge (echo)")
 
-    // Test A: load agents/echo.js — `const r = await host.echo("hi"); print(r)`.
+    // Test A: load fixtures/echo.js — `const r = await host.echo("hi"); print(r)`.
     if let engine = makeEngine() {
-        let path = "agents/echo.js"
+        let path = fixture("echo.js")
         if let src = try? String(contentsOfFile: path, encoding: .utf8) {
             _ = try? engine.eval(src)
             check("echo kicked off one async call", engine.pendingCount == 1)
@@ -275,7 +280,7 @@ do {
     print("PHASE 4 — streaming (reverse channel)")
 
     if let engine = makeEngine() {
-        let path = "agents/stream.js"
+        let path = fixture("stream.js")
         if let src = try? String(contentsOfFile: path, encoding: .utf8) {
             _ = try? engine.eval(src)
             let start = Date()
@@ -310,8 +315,8 @@ do {
     let before = failures
     print("PHASE 5 — concurrency & robustness")
 
-    func loadAgent(_ name: String) -> String? {
-        try? String(contentsOfFile: "agents/\(name)", encoding: .utf8)
+    func loadFixture(_ name: String) -> String? {
+        try? String(contentsOfFile: fixture(name), encoding: .utf8)
     }
 
     func balanced(_ engine: XSEngine) -> Bool {
@@ -320,7 +325,7 @@ do {
     }
 
     // Concurrent: Promise.all of several in-flight echoes, no id crosstalk.
-    if let engine = makeEngine(), let src = loadAgent("concurrent.js") {
+    if let engine = makeEngine(), let src = loadFixture("concurrent.js") {
         _ = try? engine.eval(src)
         engine.runUntilIdle()
         check("concurrent Promise.all preserves results", engine.outputs == ["all:a,b,c,d"])
@@ -330,7 +335,7 @@ do {
     }
 
     // Reject path: host.fail() -> Swift reject -> JS catch, no escape to Swift.
-    if let engine = makeEngine(), let src = loadAgent("error.js") {
+    if let engine = makeEngine(), let src = loadFixture("error.js") {
         _ = try? engine.eval(src)
         engine.runUntilIdle()
         check("reject surfaces in JS catch", engine.outputs == ["caught:deliberate failure"])
@@ -340,7 +345,7 @@ do {
     }
 
     // Mixed sequential agent: echo then stream, distinct ids, no crosstalk.
-    if let engine = makeEngine(), let src = loadAgent("sequential.js") {
+    if let engine = makeEngine(), let src = loadFixture("sequential.js") {
         _ = try? engine.eval(src)
         engine.runUntilIdle()
         let expected = ["echo:first", "delta:Hello", "delta: ", "delta:from",
@@ -399,13 +404,13 @@ do {
     print("PHASE 6 — ES module loader")
 
     if let engine = makeEngine() {
-        // Dynamic import resolves through the filesystem loader (cwd-relative,
+        // Dynamic import resolves through the filesystem loader (absolute path,
         // explicit extension); the imported module itself uses a static
         // `import ... from './…'` (module goal, importer-relative), so a green
         // here proves both the loader wiring and module-goal parsing.
         _ = try? engine.eval("""
             globalThis.__m = 'pending';
-            import('agents/modules/reexport.js')
+            import('\(fixture("modules/reexport.js"))')
               .then(function (m) { globalThis.__m = 'ok:' + m.doubled; })
               .catch(function (e) { globalThis.__m = 'err:' + String(e); });
             """)
