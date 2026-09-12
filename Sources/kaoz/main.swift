@@ -171,7 +171,10 @@ let env = ProcessInfo.processInfo.environment
 // overriding the CLI defaults. Secrets (API keys) come from the environment
 // here — never from JS. This backs both the run default (`--provider`) and the
 // per-call `host.provider(id, {model})` selection from JavaScript.
-let resolveProvider: @Sendable (String, [String: Any]) -> (any LLMProvider)? = { id, options in
+// Functions, not stored closures: with a top-level `await` this file is
+// main-actor, and a closure read back from a global no longer converts
+// to a `@Sendable` parameter without a warning. A `@Sendable func` does.
+@Sendable func resolveProvider(_ id: String, _ options: [String: Any]) -> (any LLMProvider)? {
     let model = (options["model"] as? String) ?? model
     func base(_ envKey: String) -> String? { (options["baseURL"] as? String) ?? env[envKey] }
     switch id {
@@ -266,7 +269,7 @@ let resolveProvider: @Sendable (String, [String: Any]) -> (any LLMProvider)? = {
 }
 // The run default (the `--provider` flag), and the catalog JS discovers via
 // host.providers().
-let makeProvider: @Sendable () -> (any LLMProvider)? = { resolveProvider(providerName, [:]) }
+@Sendable func makeProvider() -> (any LLMProvider)? { resolveProvider(providerName, [:]) }
 // `model` = the CLI default (--model / TYKAOZ_MODEL), what host.provider(id)
 // resolves to when JS omits a model — so an element is directly instantiable.
 let providerCatalog: [ProviderDescriptor] = [
