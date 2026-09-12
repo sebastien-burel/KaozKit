@@ -45,6 +45,7 @@ typedef struct XSBridge {
     int moduleStatus;       /* xsBridgeRunModule: 0 pending, 1 fulfilled, 2 rejected */
     char* moduleError;      /* rejection message (malloc'd), XS-thread only */
     char* moduleParams;     /* JSON for the default export (malloc'd or NULL) */
+    char* name;             /* machine name (strdup'd): XS keeps the pointer, never copies it */
 } XSBridge;
 
 /* A unit of work handed to the XS thread via mac_xs.c's worker-job queue. The

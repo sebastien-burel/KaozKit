@@ -683,9 +683,12 @@ void* xsBridgeCreateMachine(const XSBridgeCreation* c, const char* name)
   };
 
   XSBridge* bridge = (XSBridge*)calloc(1, sizeof(XSBridge));
-  xsMachine* machine = xsCreateMachine(
-    &creation, (name && name[0]) ? name : "XSBridge", bridge);
+  /* XS stores the name pointer as-is (the->name); the caller's buffer only
+   * lives for this call, so the bridge owns a copy for the machine's lifetime. */
+  bridge->name = strdup((name && name[0]) ? name : "XSBridge");
+  xsMachine* machine = xsCreateMachine(&creation, bridge->name, bridge);
   if (!machine) {
+    free(bridge->name);
     free(bridge);
     return NULL;
   }
@@ -717,6 +720,7 @@ void xsBridgeDeleteMachine(void* machine)
   xsServiceFreePending(bridge);   /* server-side in-flight requests (service.c) */
   free(bridge->moduleError);
   free(bridge->moduleParams);
+  free(bridge->name);
   free(bridge);
 }
 
@@ -944,11 +948,12 @@ void* xsBridgeReadSnapshot(const char* bytes, size_t len, const char* name)
   snap.read = xsBridgeBufRead;
 
   XSBridge* bridge = (XSBridge*)calloc(1, sizeof(XSBridge));
-  xsMachine* machine = fxReadSnapshot(
-    &snap, (name && name[0]) ? name : "XSBridge", bridge);
+  bridge->name = strdup((name && name[0]) ? name : "XSBridge");   /* see xsBridgeCreateMachine */
+  xsMachine* machine = fxReadSnapshot(&snap, bridge->name, bridge);
   free(callbacks);
   if (!machine || snap.error) {
     fprintf(stderr, "snapshot: read failed (%d)\n", snap.error);
+    free(bridge->name);
     free(bridge);
     return NULL;
   }
