@@ -9,7 +9,7 @@ import Foundation
 /// imports can't escape it; absolute-path imports (`import "/…"`) are NOT
 /// blocked by the engine's loader (accepted tradeoff — see the migration plan).
 /// The staging dir is removed after the run.
-public nonisolated struct AgentModuleStaging {
+public nonisolated struct AgentModuleStaging: Sendable {
     public let root: URL
     /// Absolute path of the staged agent module (import target).
     public let agentPath: String

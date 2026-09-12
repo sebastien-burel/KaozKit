@@ -27,7 +27,7 @@ public enum OpenAICompatibleError: Error, LocalizedError, Equatable {
 /// completions API (Mistral, OpenAI, DeepSeek, ...). The auth header is a
 /// Bearer token by default; specific providers can subclass / wrap if they
 /// need something different.
-public struct OpenAICompatibleClient {
+public struct OpenAICompatibleClient: Sendable {
     public let baseURL: URL
     public let apiKey: String
     public let session: URLSession

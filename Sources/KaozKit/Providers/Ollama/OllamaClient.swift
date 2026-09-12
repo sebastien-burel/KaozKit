@@ -23,7 +23,7 @@ public enum OllamaClientError: Error, LocalizedError, Equatable {
     }
 }
 
-public struct OllamaClient {
+public struct OllamaClient: Sendable {
     public let baseURL: URL
     public let session: URLSession
 

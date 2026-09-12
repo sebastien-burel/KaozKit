@@ -23,7 +23,7 @@ public enum AnthropicClientError: Error, LocalizedError, Equatable {
     }
 }
 
-public struct AnthropicClient {
+public struct AnthropicClient: Sendable {
     public let apiKey: String
     public let session: URLSession
     public let baseURL: URL

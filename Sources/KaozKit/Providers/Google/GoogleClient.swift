@@ -23,7 +23,7 @@ public enum GoogleClientError: Error, LocalizedError, Equatable {
     }
 }
 
-public struct GoogleClient {
+public struct GoogleClient: Sendable {
     public let apiKey: String
     public let session: URLSession
     public let baseURL: URL

@@ -10,8 +10,8 @@ public struct PluginManifest: Equatable {
     public let tools: [PluginToolDef]
 }
 
-public struct PluginToolDef: Equatable {
-    public enum Method: String {
+public struct PluginToolDef: Equatable, Sendable {
+    public enum Method: String, Sendable {
         case get = "GET"
         case post = "POST"
     }

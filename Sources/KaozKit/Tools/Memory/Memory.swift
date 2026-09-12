@@ -4,7 +4,7 @@ import Foundation
 /// task. Memories persist across conversations and are injected into the
 /// system prompt of future chats so the model stays consistent without having
 /// to re-ask.
-public struct Memory: Identifiable, Hashable, Codable {
+public struct Memory: Identifiable, Hashable, Codable, Sendable {
     public let id: UUID
     public var title: String
     public var content: String

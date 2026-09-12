@@ -39,7 +39,7 @@ public enum ComfyUIError: Error, LocalizedError, Equatable {
 /// The "model" is a whole workflow (ComfyUI API-format JSON). The chat
 /// prompt is injected wherever the workflow carries the `%prompt%` marker,
 /// and every `seed` / `noise_seed` is re-randomised so repeated prompts vary.
-public struct ComfyUIClient {
+public struct ComfyUIClient: Sendable {
     public let baseURL: URL
     public let apiKey: String
     public let session: URLSession
