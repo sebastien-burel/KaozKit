@@ -12,6 +12,12 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* ---- Engine identity ---- */
+
+/* The XS engine version this package was built against, as "major.minor" (a
+ * static string, never freed). What `kaoz --version` reports next to its own. */
+const char* xsBridgeEngineVersion(void);
+
 /* ---- Machine lifecycle ---- */
 
 /* VM sizing handed to xsCreateMachine — a flat mirror of the fields of

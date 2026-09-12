@@ -1105,3 +1105,15 @@ int xsBridgeEvalWithInput(void* machine, const char* src, const char* inputJSON,
 
     return ok;
 }
+
+/* -------------------------------------------------------------------------
+ * Engine identity
+ * ------------------------------------------------------------------------- */
+
+const char* xsBridgeEngineVersion(void)
+{
+  static char version[16];
+  if (!version[0])
+    snprintf(version, sizeof(version), "%d.%d", (int)XS_MAJOR_VERSION, (int)XS_MINOR_VERSION);
+  return version;
+}

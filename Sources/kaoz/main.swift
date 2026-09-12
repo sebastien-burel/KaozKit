@@ -1,5 +1,6 @@
 import Foundation
 import KaozKit
+import KaozJSCore   // xsBridgeEngineVersion, for --version
 import KaozMLX
 
 // kaoz — runs a standalone JavaScript agent headless on top of KaozKit.
@@ -131,6 +132,16 @@ if let probePath = popFlag("--http-eval") {
     exit(0)
 }
 
+// The package version. SwiftPM offers no constant for it, so this is set by
+// hand — bump it together with the git tag. The engine version comes from XS
+// itself (`XS_MAJOR_VERSION.XS_MINOR_VERSION`), the same pair the snapshot
+// signature is built from.
+let kaozVersion = "0.1.1"
+if popBool("--version") {
+    print("kaoz \(kaozVersion) (XS \(String(cString: xsBridgeEngineVersion())))")
+    exit(0)
+}
+
 // Multi-agent runs are initiated from the script itself: an agent calls
 // `new Thread()` + `new Service(thread, "sub-agent")` and `await`s the
 // sub-agent's default-export methods (see AgentRuntime / TyKaozThreads). The
@@ -144,6 +155,7 @@ guard let scriptPath = args.first else {
         [--allow-write DIR ...] [--allow-shell [--shell-dir DIR]] \
         [--allow-http [--http-host H ...]] [--webhook PORT] [--budget TOKENS] \
         [--email] [--persona FILE]
+        kaoz --version
         """, code: 2)
 }
 
