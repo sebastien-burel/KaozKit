@@ -245,24 +245,27 @@ The XS engine ships with a real source-level debugger, and `kaoz` is wired to it
 
 **xsbug** is Moddable's GUI debugger. It is built with the Moddable SDK tools (`cd $MODDABLE/build/makefiles/mac && make`) and lands in `$MODDABLE/build/bin/mac/release/xsbug.app`. Open it, then run `kaoz` as usual: every engine `kaoz` creates connects to xsbug on `localhost:5002` automatically — there is no flag to pass. A `debugger;` statement anywhere in your agent stops execution right there, in xsbug, with the stack and the variables. Expect more than one machine in the list: the JS tool bundle, a JS provider, or a sub-agent each run in their own engine, and each is named (`js-tools`, the agent after its file, and so on).
 
+![xsbug stopped on a `debugger;` in demo/hello.js, right after the model has answered — the call stack, the locals (`input` is null, `reply` already holds the date), and the two engines as tabs](demo/xsbug-breakpoint.png)
+
 **xsdb** is the command-line variant, modelled on gdb, and made to be driven by a script — or by an LLM: Claude Code can debug an agent with it. It lives in `$MODDABLE/tools/xsbug-log` (run `npm install` there once) and listens on the same port:
 
-With a `debugger;` added to `demo/hello.js` right after the `question` line:
+With the same `debugger;` as above — added to `demo/hello.js` right after the `host.llm.chat` call:
 
 ```
 $ node $MODDABLE/tools/xsbug-log/xsbug-log.js        # terminal 1 — waits for a connection
 $ kaoz demo/hello.js --provider apple                # terminal 2 — connects on its own
 
+[Thread 1] Connected to "js-tools"
 [Thread 2] Connected to "hello"
-Debugger, run() at hello.js:9
+Debugger, run() at hello.js:13
 (xsdb) bt
-  #0: run at hello.js:9
+  #0: run at hello.js:13
 (xsdb) print question
   question = 'What day is it today, and what can you do for me?'
 (xsdb) continue
 ```
 
-`XSBUG_HOST` and `XSBUG_PORT` redirect the connection. JavaScript developers often reach for `console.log()`. Here is the alternative.
+`XSBUG_HOST` and `XSBUG_PORT` redirect the connection (xsdb reads `XSBUG_LOG_PORT` for its own side) — handy when xsbug already holds 5002. JavaScript developers often reach for `console.log()`. Here is the alternative.
 
 ## The engine layer (KaozJS)
 
