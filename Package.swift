@@ -72,12 +72,17 @@ let package = Package(
         // tag loads both of our Gemma 4 checkpoints: 3.31.3 has no
         // `gemma4_unified` (the 12B), and 3.31.4's sanitizer drops the redundant
         // k_proj/v_proj of KV-shared layers but not their k_norm, so the E4B
-        // fails on `layers.24.self_attn.k_norm`. This revision drops all three.
+        // fails on `layers.24.self_attn.k_norm`. Any revision past late July
+        // drops all three. This one (2026-09-14) is the first we needed after
+        // the final macOS 27 SDK: the July revision was written against the
+        // betas, and MLXFoundationModels — pulled in by MLXHuggingFace through
+        // the default-on `FoundationModelsIntegration` trait — no longer
+        // compiled. Upstream fixed that between #438 and #544 in August.
         // A revision, never `branch:` — a branch would move the build under us.
-        // Revisit when 3.31.5 ships; it should carry both fixes.
+        // Revisit when 3.31.5 ships; it should carry all of this.
         .package(
             url: "https://github.com/ml-explore/mlx-swift-lm",
-            revision: "a65e78f1e6cfb482a28788e1f250896a86a3c837"),
+            revision: "3e6ea1ede1596f05c1715d6b82567619276e98f0"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
     ],

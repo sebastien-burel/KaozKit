@@ -196,6 +196,14 @@ public actor MLXChatActor {
                                     Self.seconds(generationStart.duration(to: $0))
                                 }
                             )))
+                        case .rejectedToolCall:
+                            // Tool-call-shaped output the parser would not
+                            // accept (malformed, incomplete, undeclared tool).
+                            // Dropped: `StreamEvent` has no warning channel
+                            // yet, and an English note in the transcript is
+                            // worse than a shorter answer. If the turn was
+                            // only that call, the user sees an empty reply.
+                            break
                         }
                     }
                     if isHarmony {
