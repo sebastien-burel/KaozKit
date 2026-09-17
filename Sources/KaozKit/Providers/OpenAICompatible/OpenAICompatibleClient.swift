@@ -131,7 +131,14 @@ public struct OpenAICompatibleClient: Sendable {
             throw OpenAICompatibleError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw OpenAICompatibleError.http(status: http.statusCode)
+            // Keep the body: the provider's own message is what tells a
+            // 500 from a gateway apart from one from the model host.
+            let body = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw OpenAICompatibleError.http(
+                status: http.statusCode,
+                body: (body?.isEmpty == false) ? body : nil
+            )
         }
         do {
             return try JSONDecoder().decode(OpenAICompatibleModelsResponse.self, from: data).data
