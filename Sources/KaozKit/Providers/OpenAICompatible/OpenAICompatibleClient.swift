@@ -250,11 +250,16 @@ public struct OpenAICompatibleClient: Sendable {
                     var firstToken: ContinuousClock.Instant?
                     var lastToken: ContinuousClock.Instant?
 
+                    var thinkFilter = ThinkTagFilter()
+                    func yieldFiltered(_ out: ThinkTagFilter.Output) {
+                        if !out.reasoning.isEmpty { continuation.yield(.reasoningDelta(out.reasoning)) }
+                        if !out.text.isEmpty { continuation.yield(.textDelta(out.text)) }
+                    }
                     func absorb(_ info: LineInfo) {
                         if let delta = info.textDelta {
                             if firstToken == nil { firstToken = clock.now }
                             lastToken = clock.now
-                            continuation.yield(.textDelta(delta))
+                            yieldFiltered(thinkFilter.feed(delta))
                         }
                         if let reasoning = info.reasoningDelta {
                             if firstToken == nil { firstToken = clock.now }
@@ -309,6 +314,7 @@ public struct OpenAICompatibleClient: Sendable {
                         if !sawDone { absorb(info) }
                     }
                     if !sawDone { flushToolCalls() }
+                    yieldFiltered(thinkFilter.flush())
 
                     var metrics = GenerationMetrics()
                     metrics.promptTokens = usage?.promptTokens
