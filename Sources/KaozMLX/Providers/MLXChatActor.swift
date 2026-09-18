@@ -368,6 +368,13 @@ public actor MLXChatActor {
             ?? localDir.map(Self.declaresVisionTower(in:))
             ?? false
         let config = ModelConfiguration(id: modelID, revision: entry?.revision ?? "main")
+        // Our Apertus copy replaces the package's, which cannot load the v1.5
+        // conversions (see KaozApertusModel.swift). Registering on every load
+        // is harmless: the creator replaces itself.
+        await LLMModelFactory.shared.typeRegistry.registerModelType("apertus") { data in
+            try KaozApertusModel(
+                JSONDecoder().decode(KaozApertusConfiguration.self, from: data))
+        }
         let loaded: ModelContainer
         do {
             if isVision {
