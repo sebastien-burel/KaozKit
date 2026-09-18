@@ -108,17 +108,30 @@ public actor MLXChatActor {
                     let isHarmony = modelID.localizedCaseInsensitiveContains("gpt-oss")
                         || modelID.localizedCaseInsensitiveContains("gpt_oss")
                         || modelID.localizedCaseInsensitiveContains("gptoss")
+                    // Apertus's chat template wants the same structured
+                    // `tool_calls` (a call serialised into assistant text
+                    // is just prose to it), and it rejects an assistant
+                    // message without `content`.
+                    let isApertus = modelID.localizedCaseInsensitiveContains("apertus")
                     let mappedTools = tools.isEmpty ? nil : tools.compactMap(Self.mapTool)
                     let context = reasoningEffortContext(reasoningEffort)
-                    let userInput = isHarmony
-                        ? UserInput(
+                    let userInput: UserInput
+                    if isHarmony {
+                        userInput = UserInput(
                             messages: Self.mapMessagesHarmony(messages),
                             tools: mappedTools,
                             additionalContext: context)
-                        : UserInput(
+                    } else if isApertus {
+                        userInput = UserInput(
+                            messages: Self.mapMessagesApertus(messages),
+                            tools: mappedTools,
+                            additionalContext: context)
+                    } else {
+                        userInput = UserInput(
                             chat: Self.mapMessages(messages),
                             tools: mappedTools,
                             additionalContext: context)
+                    }
                     let lmInput = try await container.prepare(input: userInput)
                     let params = GenerateParameters(
                         maxTokens: 4096,
@@ -142,7 +155,9 @@ public actor MLXChatActor {
                     // buffered parser strips them from the answer.
                     let needsGemma4 = modelID.localizedCaseInsensitiveContains("gemma-4")
                         || modelID.localizedCaseInsensitiveContains("gemma4")
-                    let blocks = needsGemma4 ? Self.gemma4Blocks : Self.thinkBlocks
+                    let blocks = needsGemma4
+                        ? Self.gemma4Blocks
+                        : isApertus ? Self.apertusBlocks : Self.thinkBlocks
                     var streamState = StreamState()
                     // Qwen 3.5 (and the DeepSeek-R1 distills) end the
                     // generation prompt with the `<think>` marker, so the
@@ -577,6 +592,30 @@ public actor MLXChatActor {
         }
     }
 
+    /// Apertus takes the Harmony dicts, with two things its template
+    /// insists on for a tool call: a `content` on the assistant message,
+    /// and truthy `arguments` — it tests the value, so an empty object
+    /// raises "Invalid tool call". A call without arguments carries the
+    /// string "{}", which the template renders verbatim.
+    private static func mapMessagesApertus(_ messages: [ChatMessage]) -> [[String: any Sendable]] {
+        messages.map { msg in
+            guard msg.role == .toolCall else { return mapMessagesHarmony([msg])[0] }
+            let parsed = sendableJSONObject(msg.content)
+            let arguments: any Sendable = parsed.isEmpty ? "{}" : parsed
+            return [
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [[
+                    "type": "function",
+                    "function": [
+                        "name": msg.toolName ?? "unknown",
+                        "arguments": arguments,
+                    ] as [String: any Sendable],
+                ] as [String: any Sendable]],
+            ]
+        }
+    }
+
     /// Parses a JSON-object string into native Swift `Sendable` values
     /// for the Jinja rendering context. The template re-serialises this
     /// with `|tojson`, so types must survive the round-trip; returns an
@@ -628,6 +667,8 @@ public actor MLXChatActor {
     /// rendered in the chat view); `.suppress` is dropped.
     private enum StreamBlockKind {
         case toolCall
+        /// Apertus's `[{"name": args}, …]` list — one block, several calls.
+        case apertusToolCalls
         case reasoning
         case suppress
     }
@@ -678,6 +719,18 @@ public actor MLXChatActor {
     /// route it to reasoning so it doesn't leak into the answer.
     private static let thinkBlocks: [StreamBlock] = [
         StreamBlock(opens: ["<think>"], closes: ["</think>"], kind: .reasoning),
+    ]
+    /// Apertus thinks in `<think>` tags and calls tools with
+    /// `<|tools_prefix|>[{"name": args}]<|tools_suffix|>`, a shape
+    /// mlx-swift-lm has no parser for, so the envelope reaches us as text.
+    /// The suffix is one of the model's end-of-sequence tokens: the block
+    /// only ever closes when the stream ends, through `flushStreamState`.
+    private static let apertusBlocks: [StreamBlock] = thinkBlocks + [
+        StreamBlock(
+            opens: ["<|tools_prefix|>"],
+            closes: ["<|tools_suffix|>"],
+            kind: .apertusToolCalls
+        ),
     ]
 
     /// True when the rendered prompt already opened a `<think>` block that
@@ -870,6 +923,18 @@ public actor MLXChatActor {
                 // Couldn't parse — emit the raw span as text so
                 // nothing is silently swallowed.
                 continuation.yield(.textDelta(raw))
+            }
+        case .apertusToolCalls:
+            let calls = parseApertusPayload(payload)
+            if calls.isEmpty {
+                continuation.yield(.textDelta(raw))
+            }
+            for call in calls {
+                continuation.yield(.toolCall(
+                    id: "mlx-" + UUID().uuidString.prefix(8).lowercased(),
+                    name: call.name,
+                    argumentsJSON: call.argumentsJSON
+                ))
             }
         case .reasoning:
             // Discard the channel name, keep the content. The chat view
@@ -1143,6 +1208,56 @@ public actor MLXChatActor {
     /// without going through the full streaming loop.
     static public func parseGemma4PayloadForTests(_ payload: String) -> (name: String, argumentsJSON: String)? {
         parseGemma4Payload(payload)
+    }
+
+    static public func mapMessagesApertusForTests(_ messages: [ChatMessage]) -> [[String: any Sendable]] {
+        mapMessagesApertus(messages)
+    }
+
+    static public func parseApertusPayloadForTests(_ payload: String) -> [(name: String, argumentsJSON: String)] {
+        parseApertusPayload(payload)
+    }
+
+    /// Parses the list between Apertus's tool markers: `[{"name": {…}},
+    /// …]`, each call an object with a single key. A call without
+    /// arguments comes out as `{"name": }` — no value at all — so that
+    /// hole is filled with `{}` before the JSON parser sees it. A bare
+    /// object without the list brackets is taken too.
+    private static func parseApertusPayload(_ payload: String) -> [(name: String, argumentsJSON: String)] {
+        var text = payload.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let holes = try? NSRegularExpression(pattern: #"("(?:[^"\\]|\\.)*")\s*:\s*(?=[,}\]])"#) {
+            text = holes.stringByReplacingMatches(
+                in: text, range: NSRange(text.startIndex..., in: text),
+                withTemplate: "$1: {}")
+        }
+        guard let data = text.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data)
+        else { return [] }
+        let entries: [[String: Any]]
+        if let list = parsed as? [[String: Any]] {
+            entries = list
+        } else if let single = parsed as? [String: Any] {
+            entries = [single]
+        } else {
+            return []
+        }
+        return entries.compactMap { entry in
+            guard entry.count == 1, let (name, value) = entry.first else { return nil }
+            let args: [String: Any]
+            if let dict = value as? [String: Any] {
+                args = dict
+            } else if let string = value as? String,
+                      let stringData = string.data(using: .utf8),
+                      let dict = try? JSONSerialization.jsonObject(with: stringData) as? [String: Any] {
+                args = dict
+            } else {
+                args = [:]
+            }
+            guard let argsData = try? JSONSerialization.data(withJSONObject: args),
+                  let json = String(data: argsData, encoding: .utf8)
+            else { return nil }
+            return (name, json)
+        }
     }
 
     /// Parses a Gemma 4 call payload. Tries the canonical
