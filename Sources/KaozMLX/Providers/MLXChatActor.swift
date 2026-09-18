@@ -720,12 +720,19 @@ public actor MLXChatActor {
     private static let thinkBlocks: [StreamBlock] = [
         StreamBlock(opens: ["<think>"], closes: ["</think>"], kind: .reasoning),
     ]
-    /// Apertus thinks in `<think>` tags and calls tools with
+    /// Apertus thinks between `<|inner_prefix|>` and `<|inner_suffix|>`
+    /// (its own template; the community conversions rewrite them as
+    /// `<think>`, so both are accepted) and calls tools with
     /// `<|tools_prefix|>[{"name": args}]<|tools_suffix|>`, a shape
     /// mlx-swift-lm has no parser for, so the envelope reaches us as text.
     /// The suffix is one of the model's end-of-sequence tokens: the block
     /// only ever closes when the stream ends, through `flushStreamState`.
-    private static let apertusBlocks: [StreamBlock] = thinkBlocks + [
+    private static let apertusBlocks: [StreamBlock] = [
+        StreamBlock(
+            opens: ["<|inner_prefix|>", "<think>"],
+            closes: ["<|inner_suffix|>", "</think>"],
+            kind: .reasoning
+        ),
         StreamBlock(
             opens: ["<|tools_prefix|>"],
             closes: ["<|tools_suffix|>"],
@@ -1153,9 +1160,10 @@ public actor MLXChatActor {
     static public func collectStreamEventsForTests(
         _ chunks: [String],
         gemma: Bool,
+        apertus: Bool = false,
         preOpenedThink: Bool = false
     ) async -> [StreamEvent] {
-        let blocks = gemma ? gemma4Blocks : thinkBlocks
+        let blocks = gemma ? gemma4Blocks : apertus ? apertusBlocks : thinkBlocks
         let stream = AsyncThrowingStream<StreamEvent, Error> { continuation in
             var state = StreamState()
             if preOpenedThink { state.block = blocks.first }
