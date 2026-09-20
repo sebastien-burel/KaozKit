@@ -44,20 +44,25 @@ public struct TyKaozCloudProvider: LLMProvider {
     }
 
     /// The answer arrives whole — the sovereign cloud has no streaming
-    /// transport for the endpoint yet — so client-side timings would only
-    /// clock the download. The token counts the endpoint reports are kept;
-    /// the durations are dropped rather than shown as absurd speeds.
+    /// transport for the endpoint yet — so the client's first-to-last-token
+    /// window only clocks the download and reads as an absurd speed. The
+    /// throughput shown is the whole round trip instead: output tokens
+    /// over the time from request to complete answer, latency included.
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
         let source = client.chat(model: model, messages: messages, tools: tools)
         return AsyncThrowingStream { continuation in
             let task = Task {
+                let clock = ContinuousClock()
+                let start = clock.now
                 do {
                     for try await event in source {
                         if case .metrics(let measured) = event {
-                            var counts = GenerationMetrics()
-                            counts.promptTokens = measured.promptTokens
-                            counts.completionTokens = measured.completionTokens
-                            continuation.yield(.metrics(counts))
+                            var metrics = GenerationMetrics()
+                            metrics.promptTokens = measured.promptTokens
+                            metrics.completionTokens = measured.completionTokens
+                            let elapsed = start.duration(to: clock.now).components
+                            metrics.generationDuration = Double(elapsed.seconds) + Double(elapsed.attoseconds) * 1e-18
+                            continuation.yield(.metrics(metrics))
                         } else {
                             continuation.yield(event)
                         }
