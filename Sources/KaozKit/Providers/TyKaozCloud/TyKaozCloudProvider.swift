@@ -43,7 +43,31 @@ public struct TyKaozCloudProvider: LLMProvider {
         }
     }
 
+    /// The answer arrives whole — the sovereign cloud has no streaming
+    /// transport for the endpoint yet — so client-side timings would only
+    /// clock the download. The token counts the endpoint reports are kept;
+    /// the durations are dropped rather than shown as absurd speeds.
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
-        client.chat(model: model, messages: messages, tools: tools)
+        let source = client.chat(model: model, messages: messages, tools: tools)
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    for try await event in source {
+                        if case .metrics(let measured) = event {
+                            var counts = GenerationMetrics()
+                            counts.promptTokens = measured.promptTokens
+                            counts.completionTokens = measured.completionTokens
+                            continuation.yield(.metrics(counts))
+                        } else {
+                            continuation.yield(event)
+                        }
+                    }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 }
