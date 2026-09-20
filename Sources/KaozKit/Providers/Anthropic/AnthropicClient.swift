@@ -80,11 +80,15 @@ public struct AnthropicClient: Sendable {
 
     // MARK: - Chat (streaming)
 
+    /// The output ceiling when the caller sets none.
+    public static let defaultMaxTokens = 4096
+
     public func chat(
         model: String,
         messages: [ChatMessage],
         tools: [ToolSpec],
-        maxTokens: Int = 4096
+        maxTokens: Int = AnthropicClient.defaultMaxTokens,
+        effort: String? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -99,7 +103,8 @@ public struct AnthropicClient: Sendable {
                         model: model,
                         messages: messages,
                         tools: tools,
-                        maxTokens: maxTokens
+                        maxTokens: maxTokens,
+                        effort: effort
                     )
 
                     let (bytes, response): (URLSession.AsyncBytes, URLResponse)
@@ -270,7 +275,8 @@ public struct AnthropicClient: Sendable {
         model: String,
         messages: [ChatMessage],
         tools: [ToolSpec],
-        maxTokens: Int
+        maxTokens: Int,
+        effort: String? = nil
     ) throws -> Data {
         // System messages are concatenated into the top-level `system`
         // parameter; they don't go in the messages array.
@@ -284,6 +290,10 @@ public struct AnthropicClient: Sendable {
             "messages": try messagesToDicts(messages)
         ]
         if let system, !system.isEmpty { dict["system"] = system }
+        // Effort is the only thinking control the newer models take (thinking
+        // itself is on by default there); older models reject the field, so it
+        // is never sent unasked.
+        if let effort, !effort.isEmpty { dict["output_config"] = ["effort": effort] }
         if !tools.isEmpty {
             dict["tools"] = try tools.map { spec -> [String: Any] in
                 let schema = try JSONSerialization.jsonObject(with: Data(spec.inputSchemaJSON.utf8))

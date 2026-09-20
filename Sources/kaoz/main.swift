@@ -182,7 +182,12 @@ let env = ProcessInfo.processInfo.environment
         guard let key = env["ANTHROPIC_API_KEY"], !key.isEmpty, let model, !model.isEmpty else {
             return nil
         }
-        return AnthropicProvider(apiKey: key, model: model)
+        // Per-call knobs from the selector, both optional: an agent writing
+        // prose on a model that always thinks needs more than the default
+        // output ceiling, and picks its effort; everyone else sends neither.
+        return AnthropicProvider(apiKey: key, model: model,
+                                 maxTokens: options["maxTokens"] as? Int,
+                                 effort: options["effort"] as? String)
     case "js-anthropic":
         guard let key = env["ANTHROPIC_API_KEY"], !key.isEmpty, let model, !model.isEmpty else {
             return nil
