@@ -15,7 +15,7 @@ public struct TyKaozCloudProvider: LLMProvider {
     private let client: OpenAICompatibleClient
 
     public static let baseURL = URL(string: "https://cloud.tykaoz.bzh/v1")!
-    public static let defaultModel = "amazon.nova-lite-v1:0"
+    public static let defaultModel = "TyKaoz Lite"
 
     public init(
         apiKey: String, model: String = TyKaozCloudProvider.defaultModel,
