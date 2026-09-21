@@ -7,7 +7,7 @@ import Foundation
 /// Owns the endpoint so the settings UI doesn't keep its own copy of the URL.
 public struct TyKaozCloudProvider: LLMProvider {
     public let id: String = "tykaozCloud"
-    public let displayName: String = "TyKaoz Cloud"
+    public let displayName: String = "TyKaoz"
 
     public let apiKey: String
     public let model: String
@@ -67,7 +67,7 @@ public struct TyKaozCloudProvider: LLMProvider {
 
     public func availability() async -> ProviderAvailability {
         guard !apiKey.isEmpty else {
-            return .unavailable(reason: "Enter your TyKaoz Cloud key in Settings.")
+            return .unavailable(reason: "Enter your TyKaoz key in Settings.")
         }
         do {
             let models = try await client.listModels()
