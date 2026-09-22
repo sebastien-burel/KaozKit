@@ -190,11 +190,11 @@ Both take a `makeProvider` (the run default), an optional `resolveProvider(id, o
 
 Every provider conforms to `LLMProvider` (a streaming `chat(messages:tools:)`).
 
-- **Native (Swift):** `AnthropicProvider`, `GoogleProvider` (Gemini), `OllamaProvider`, `OpenAIProvider`, and OpenAI-compatible wrappers `LocalOpenAIProvider` (LM Studio / llama.cpp), `DeepSeekProvider`, `MistralProvider`, `QwenProvider`, `ZAIProvider`; `AppleIntelligenceProvider` (on-device Foundation Models); `ComfyUIProvider` (image generation).
+- **Native (Swift):** `AnthropicProvider`, `GoogleProvider` (Gemini), `OllamaProvider`, `OpenAIProvider`, and OpenAI-compatible wrappers `LocalOpenAIProvider` (LM Studio / llama.cpp), `DeepSeekProvider`, `MistralProvider`, `QwenProvider`, `ZAIProvider`, `XAIProvider`, `MiniMaxProvider`, `InfomaniakProvider`, `ScalewayProvider`, `TyKaozCloudProvider`; `AppleIntelligenceProvider` (on-device Foundation Models); `ComfyUIProvider` (image generation). Models that reason inline (`<think>…</think>` in the text) have it routed to `reasoningDelta` by `ThinkTagFilter`.
 - **JS-defined** (`JSProvider`, backed by `Resources/js/*.js` over the native `__http` primitive): `JSProviders.anthropic` / `.openai` / `.openaiCompatible` / `.ollama` / `.kimi` / `.google`.
 - **Embeddings** (`EmbeddingProvider`): `HashingEmbeddingProvider` (dependency-free, lexical) and `OllamaEmbeddingProvider`; MLX embeddings via `KaozMLX`.
 
-**KaozMLX** (opt-in) adds on-device Apple-silicon inference: `MLXLLMProvider`, `MLXEmbeddingProvider`, plus `MLXModelStore` / `MLXDownloadCenter` / `ModelCatalogService` for Hugging Face model management. Its Metal library isn't produced by `swift build` for a CLI, so run `scripts/link-mlx-metallib.sh` once after building to use `--provider mlx` from `kaoz` (see the script header).
+**KaozMLX** (opt-in) adds on-device Apple-silicon inference: `MLXLLMProvider` (with a dedicated path for Apertus — its conversions, tool calls and reasoning markers), `MLXEmbeddingProvider`, plus `MLXModelStore` / `MLXDownloadCenter` / `ModelCatalogService` for Hugging Face model management. Its Metal library isn't produced by `swift build` for a CLI, so run `scripts/link-mlx-metallib.sh` once after building to use `--provider mlx` from `kaoz` (see the script header).
 
 ## Tools & confinement
 
