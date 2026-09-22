@@ -55,6 +55,17 @@ public actor MLXChatActor {
     private var lastUsedAt: Date = .distantPast
     private var idleUnloadTask: Task<Void, Never>?
 
+    /// The KV cache the last turn left behind, and the prompt tokens it is
+    /// known to hold. A tool-calling round re-sends the whole conversation
+    /// with the result appended, so without this every round prefills the
+    /// entire context again — the dominant cost of a local turn.
+    ///
+    /// The ledger records the *prompt* only. The cache also holds whatever
+    /// was generated after it, which is why reuse always trims down to the
+    /// agreed prefix rather than assuming the two lengths match.
+    private var cache: [KVCache]?
+    private var cachedTokens: [Int] = []
+
     /// Default idle threshold before unloading the container. 5
     /// minutes — short enough to feel polite on a 16 GB Mac running
     /// the wiki embedder + a chat model, long enough to absorb a
@@ -137,10 +148,44 @@ public actor MLXChatActor {
                         maxTokens: 4096,
                         temperature: 0.7
                     )
-                    let stream = try await container.generate(
-                        input: lmInput,
-                        parameters: params
-                    )
+                    // Reuse what the last turn already prefilled, when this
+                    // prompt starts with it. Media is excluded on purpose:
+                    // an image occupies positions the token ledger does not
+                    // record, so token equality would not prove the cache
+                    // holds what the prompt says.
+                    let promptTokens = lmInput.text.tokens.asArray(Int.self)
+                    let carriesMedia = lmInput.image != nil || lmInput.video != nil
+                        || messages.contains { !$0.imageURLs.isEmpty }
+                    let reusable = carriesMedia
+                        ? 0
+                        : Self.commonPrefixLength(self.cachedTokens, promptTokens)
+                    let live = self.cache
+                    let box: CacheBox
+                    let feed: LMInput
+                    if reusable > 0, let live, !live.isEmpty, Self.trim(live, to: reusable) {
+                        box = CacheBox(live)
+                        feed = LMInput(tokens: MLXArray(Array(promptTokens[reusable...])))
+                    } else {
+                        box = try await container.perform { context in
+                            CacheBox(try context.model.newCache(parameters: params))
+                        }
+                        feed = lmInput
+                    }
+                    // The ledger is written before generation, not after: a
+                    // turn that is cancelled still leaves its prompt in the
+                    // cache, and the next one may reuse it. Only the prompt
+                    // is recorded — whatever the model appends after it is
+                    // trimmed away by the next reuse.
+                    self.cache = box.cache
+                    self.cachedTokens = promptTokens
+                    let stream = try await container.perform(nonSendable: feed) { context, input in
+                        try MLXLMCommon.generate(
+                            input: input,
+                            cache: box.cache,
+                            parameters: params,
+                            context: context
+                        )
+                    }
                     // Stateful intercept layer for Gemma 4. MLX's
                     // GemmaFunctionParser targets the Gemma 3
                     // tokens (`<start_function_call>`,
@@ -230,6 +275,11 @@ public actor MLXChatActor {
                     scheduleIdleUnload()
                     continuation.finish()
                 } catch {
+                    // A failure can come from the prefill itself, so what
+                    // the cache holds is no longer known: drop it rather
+                    // than reuse a ledger that may have outrun it.
+                    cache = nil
+                    cachedTokens = []
                     // Even on failure, kick off the idle countdown
                     // so a stuck container doesn't hold memory if
                     // the user gives up after one bad round.
@@ -242,6 +292,46 @@ public actor MLXChatActor {
         }
     }
 
+    // MARK: - Prompt cache
+
+    /// Carries a KV cache across the container's isolation boundary. The
+    /// cache is a graph of classes and is not `Sendable`; this actor is its
+    /// only owner and runs one turn at a time, so the hand-off is safe in
+    /// the single direction it happens.
+    private final class CacheBox: @unchecked Sendable {
+        let cache: [KVCache]
+        init(_ cache: [KVCache]) { self.cache = cache }
+    }
+
+    /// How many leading tokens two prompts agree on.
+    ///
+    /// Capped one short of the new prompt: generation needs at least one
+    /// token to run the model on, and a cache holding everything would
+    /// leave nothing to feed it.
+    static func commonPrefixLength(_ cached: [Int], _ prompt: [Int]) -> Int {
+        let limit = min(cached.count, prompt.count == 0 ? 0 : prompt.count - 1)
+        var i = 0
+        while i < limit, cached[i] == prompt[i] { i += 1 }
+        return i
+    }
+
+    /// Cuts every leaf of the cache back to `length` positions, or reports
+    /// that it cannot. A rotating cache whose ring has wrapped cannot give
+    /// back what it evicted, and a leaf that trims short leaves the array
+    /// inconsistent — either way the caller must drop the whole cache
+    /// rather than generate against a cache that no longer matches its
+    /// ledger.
+    static func trim(_ cache: [KVCache], to length: Int) -> Bool {
+        guard cache.allSatisfy({ $0.offset >= length && $0.isTrimmable(after: length) }) else {
+            return false
+        }
+        for leaf in cache {
+            let excess = leaf.offset - length
+            guard excess == 0 || leaf.trim(excess) == excess else { return false }
+        }
+        return true
+    }
+
     /// Drops the loaded container. Releases GPU buffers + ~few GB
     /// RAM for 4-bit chat models. Called by the idle-unload timer
     /// and exposed publicly so the Phase B settings UI could wire
@@ -250,6 +340,10 @@ public actor MLXChatActor {
         idleUnloadTask?.cancel()
         idleUnloadTask = nil
         container = nil
+        // The cache belongs to the model that built it, and it is the
+        // larger half of what an unload is meant to hand back.
+        cache = nil
+        cachedTokens = []
     }
 
     /// Unloads every loaded chat container — the manual "décharger"
