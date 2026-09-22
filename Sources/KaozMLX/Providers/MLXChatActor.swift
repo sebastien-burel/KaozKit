@@ -441,8 +441,7 @@ public actor MLXChatActor {
 
     private func unloadIfStill(scheduledAt: Date) {
         guard lastUsedAt == scheduledAt else { return }
-        container = nil
-        idleUnloadTask = nil
+        unload()
     }
 
     // MARK: - Internals
