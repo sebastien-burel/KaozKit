@@ -1,10 +1,12 @@
 import Foundation
 
-/// TyKaoz Cloud: Haruni's endpoint in the AWS European Sovereign Cloud,
-/// serving the Amazon Nova models over an OpenAI-compatible API. Keys are
-/// issued by Haruni; the endpoint counts tokens per key.
+/// TyKaoz Cloud: Haruni's endpoints, over an OpenAI-compatible API. The
+/// AWS European Sovereign Cloud serves the Amazon Nova models; Paris
+/// serves Scaleway's. One key opens both and spends one budget; each
+/// endpoint lists only its own models, so the provider asks both and
+/// sends every model to the endpoint that listed it.
 ///
-/// Owns the endpoint so the settings UI doesn't keep its own copy of the URL.
+/// Owns the endpoints so the settings UI doesn't keep its own copy of the URLs.
 public struct TyKaozCloudProvider: LLMProvider {
     public let id: String = "tykaozCloud"
     public let displayName: String = "TyKaoz"
@@ -12,18 +14,67 @@ public struct TyKaozCloudProvider: LLMProvider {
     public let apiKey: String
     public let model: String
 
-    private let client: OpenAICompatibleClient
+    private let session: URLSession
 
     public static let baseURL = URL(string: "https://cloud.tykaoz.bzh/v1")!
+    public static let parisBaseURL = URL(string: "https://fr.cloud.tykaoz.bzh/v1")!
     public static let defaultModel = "TyKaoz Lite"
 
     public init(
         apiKey: String, model: String = TyKaozCloudProvider.defaultModel,
-        baseURL: URL = TyKaozCloudProvider.baseURL, session: URLSession = .shared
+        session: URLSession = .shared
     ) {
         self.apiKey = apiKey
         self.model = model
-        self.client = OpenAICompatibleClient(baseURL: baseURL, apiKey: apiKey, session: session)
+        self.session = session
+    }
+
+    /// Every model the key can use, from both endpoints, remembering which
+    /// endpoint serves which. An endpoint that fails is left out, so Paris
+    /// being down still leaves Nova; only both failing is an error.
+    public static func listModels(apiKey: String, session: URLSession = .shared) async throws -> [String] {
+        @Sendable func list(_ url: URL) async -> Result<[String], any Error> {
+            do {
+                let client = OpenAICompatibleClient(baseURL: url, apiKey: apiKey, session: session)
+                return .success(try await client.listModels().map(\.id))
+            } catch {
+                return .failure(error)
+            }
+        }
+        async let sovereign = list(baseURL)
+        async let paris = list(parisBaseURL)
+        let served = try endpoints(from: [(baseURL, await sovereign), (parisBaseURL, await paris)])
+        await TyKaozCloudDirectory.shared.replace(served)
+        return served.keys.sorted()
+    }
+
+    /// Which endpoint serves which model, from each endpoint's list. The
+    /// first endpoint to list a name keeps it; the first error is thrown
+    /// only when no endpoint answered.
+    static func endpoints(from lists: [(URL, Result<[String], any Error>)]) throws -> [String: URL] {
+        var served: [String: URL] = [:]
+        var firstError: (any Error)?
+        var answered = false
+        for (url, result) in lists {
+            switch result {
+            case .success(let ids):
+                answered = true
+                for id in ids where served[id] == nil { served[id] = url }
+            case .failure(let error):
+                firstError = firstError ?? error
+            }
+        }
+        if !answered, let firstError { throw firstError }
+        return served
+    }
+
+    /// The endpoint serving this provider's model: remembered from the last
+    /// listing, or listed now. The sovereign cloud when nobody claims it,
+    /// so an unknown model gets that endpoint's own "not found".
+    private func endpoint() async throws -> URL {
+        if let url = await TyKaozCloudDirectory.shared.url(for: model) { return url }
+        _ = try await Self.listModels(apiKey: apiKey, session: session)
+        return await TyKaozCloudDirectory.shared.url(for: model) ?? Self.baseURL
     }
 
     /// How much of the month's allowance a key has spent. The endpoint
@@ -70,8 +121,8 @@ public struct TyKaozCloudProvider: LLMProvider {
             return .unavailable(reason: "Enter your TyKaoz key in Settings.")
         }
         do {
-            let models = try await client.listModels()
-            guard models.contains(where: { $0.id == model }) else {
+            let models = try await Self.listModels(apiKey: apiKey, session: session)
+            guard models.contains(model) else {
                 return .unavailable(reason: "Model \"\(model)\" is not accessible with this key.")
             }
             return .ready
@@ -82,20 +133,24 @@ public struct TyKaozCloudProvider: LLMProvider {
         }
     }
 
-    /// The answer arrives whole — the sovereign cloud has no streaming
-    /// transport for the endpoint yet — so the client's first-to-last-token
-    /// window only clocks the download and reads as an absurd speed. The
-    /// throughput shown is the whole round trip instead: output tokens
-    /// over the time from request to complete answer, latency included.
+    /// From the sovereign cloud the answer arrives whole — it has no
+    /// streaming transport for the endpoint yet — so the client's
+    /// first-to-last-token window only clocks the download and reads as an
+    /// absurd speed. The throughput shown there is the whole round trip
+    /// instead: output tokens over the time from request to complete
+    /// answer, latency included. Paris streams, and its metrics stand.
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
-        let source = client.chat(model: model, messages: messages, tools: tools)
-        return AsyncThrowingStream { continuation in
+        AsyncThrowingStream { continuation in
             let task = Task {
-                let clock = ContinuousClock()
-                let start = clock.now
                 do {
+                    let url = try await endpoint()
+                    let source = OpenAICompatibleClient(baseURL: url, apiKey: apiKey, session: session)
+                        .chat(model: model, messages: messages, tools: tools)
+                    let buffered = url == Self.baseURL
+                    let clock = ContinuousClock()
+                    let start = clock.now
                     for try await event in source {
-                        if case .metrics(let measured) = event {
+                        if buffered, case .metrics(let measured) = event {
                             var metrics = GenerationMetrics()
                             metrics.promptTokens = measured.promptTokens
                             metrics.completionTokens = measured.completionTokens
@@ -114,4 +169,14 @@ public struct TyKaozCloudProvider: LLMProvider {
             continuation.onTermination = { _ in task.cancel() }
         }
     }
+}
+
+/// Which endpoint serves which model, from the last listing. Shared by
+/// every provider value, since the app builds one per turn.
+private actor TyKaozCloudDirectory {
+    static let shared = TyKaozCloudDirectory()
+    private var served: [String: URL] = [:]
+
+    func replace(_ served: [String: URL]) { self.served = served }
+    func url(for model: String) -> URL? { served[model] }
 }
