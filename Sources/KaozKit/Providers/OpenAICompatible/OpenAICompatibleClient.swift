@@ -199,6 +199,15 @@ public struct OpenAICompatibleClient: Sendable {
                     request.timeoutInterval = 60
                     request.httpBody = try Self.buildBody(model: model, messages: messages, tools: tools)
 
+                    // Client-side timing for the benchmark metrics. The
+                    // server reports token counts but no durations, so we
+                    // clock first/last token off the byte stream ourselves —
+                    // from the send, not the headers: a server may hold its
+                    // headers until the first token (Scaleway does), and
+                    // the prefill would then fall outside the TTFT.
+                    let clock = ContinuousClock()
+                    let requestStart = clock.now
+
                     let (bytes, response): (URLSession.AsyncBytes, URLResponse)
                     do {
                         (bytes, response) = try await session.bytes(for: request)
@@ -242,11 +251,6 @@ public struct OpenAICompatibleClient: Sendable {
                         accumulators.removeAll()
                     }
 
-                    // Client-side timing for the benchmark metrics. The
-                    // server reports token counts but no durations, so we
-                    // clock first/last token off the byte stream ourselves.
-                    let clock = ContinuousClock()
-                    let requestStart = clock.now
                     var firstToken: ContinuousClock.Instant?
                     var lastToken: ContinuousClock.Instant?
 
