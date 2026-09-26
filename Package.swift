@@ -83,8 +83,8 @@ let package = Package(
         //
         // For now it comes from a fork: that same revision, 3e6ea1e, plus one
         // commit that drops the MTP head from converted Qwen 3.5 VLM checkpoints
-        // (Qwen 3.8 "-MTP" conversions, ThinkingCap), which otherwise fail to
-        // load on unhandled `mtp` keys. The fix is proposed upstream on branch
+        // that keep it (ThinkingCap-Qwen3.8), which otherwise fail to load on
+        // unhandled `mtp` keys. The fix is proposed upstream on branch
         // fix/qwen35-vlm-mtp-in-mlx-checkpoints; once merged, return to
         // ml-explore at the first revision that carries it — and the app with it,
         // which must name the same URL.
