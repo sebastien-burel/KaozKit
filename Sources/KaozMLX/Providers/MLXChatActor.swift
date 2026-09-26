@@ -66,6 +66,29 @@ public actor MLXChatActor {
     private var cache: [KVCache]?
     private var cachedTokens: [Int] = []
 
+    /// Copies of the leaves that cannot be cut back — the recurrent state of
+    /// Qwen 3.5's linear layers, the ring of a sliding window — taken a few
+    /// tokens short of the last prompt's end. Those leaves only ever return to
+    /// a point someone kept, so without this the whole prompt is prefilled
+    /// again every round on those models.
+    private var snapshot: Snapshot?
+
+    struct Snapshot {
+        /// How many prompt tokens the copies hold.
+        let length: Int
+        /// The copied leaves, by their index in the cache.
+        let leaves: [Int: KVCache]
+        /// The model's per-call state at that point. Qwen 3.5 refuses to
+        /// continue a warm cache without its rope deltas.
+        let state: LMOutput.State?
+    }
+
+    /// How far before the prompt's end the snapshot is taken. The next round
+    /// rewrites the tail of this prompt — the assistant's opening, a newline
+    /// the tokenizer merges — which took 1 to 4 tokens on Qwen 3.6, Apertus
+    /// and Gemma 4 (measured 2026-09-26).
+    static let snapshotMargin = 8
+
     /// Default idle threshold before unloading the container. 5
     /// minutes — short enough to feel polite on a 16 GB Mac running
     /// the wiki embedder + a chat model, long enough to absorb a
@@ -161,15 +184,57 @@ public actor MLXChatActor {
                         : Self.commonPrefixLength(self.cachedTokens, promptTokens)
                     let live = self.cache
                     let box: CacheBox
-                    let feed: LMInput
+                    // How many prompt tokens the cache already holds, and the
+                    // model state that goes with them.
+                    var fedFrom: Int
+                    var state: LMOutput.State?
                     if reusable > 0, let live, !live.isEmpty, Self.trim(live, to: reusable) {
                         box = CacheBox(live)
-                        feed = LMInput(tokens: MLXArray(Array(promptTokens[reusable...])))
+                        fedFrom = reusable
+                    } else if let snapshot = self.snapshot, reusable >= snapshot.length,
+                              let live, let restored = Self.restore(live, from: snapshot) {
+                        box = CacheBox(restored)
+                        fedFrom = snapshot.length
+                        state = snapshot.state
                     } else {
                         box = try await container.perform { context in
                             CacheBox(try context.model.newCache(parameters: params))
                         }
-                        feed = lmInput
+                        fedFrom = 0
+                    }
+                    let reusedTokens = fedFrom
+                    // A cache with leaves that cannot be cut back gets a
+                    // snapshot short of the prompt's end, where the next round
+                    // will still agree with this one: the prompt is prefilled
+                    // up to there first, copied, then finished by the
+                    // generation below. Media turns get none — the ledger does
+                    // not describe what an image put in the cache.
+                    self.snapshot = nil
+                    if !carriesMedia, box.cache.contains(where: Self.needsSnapshot) {
+                        let length = max(fedFrom, promptTokens.count - Self.snapshotMargin)
+                        if length > fedFrom {
+                            let head = Carry(
+                                LMInput(tokens: MLXArray(Array(promptTokens[fedFrom..<length]))), state)
+                            state = try await container.perform(nonSendable: head) { context, head in
+                                // The iterator prefills all of its input; the
+                                // token it samples at the end is not kept.
+                                let iterator = try TokenIterator(
+                                    input: head.input, model: context.model, cache: box.cache,
+                                    state: head.state, parameters: params)
+                                return Carry(head.input, iterator.state)
+                            }.state
+                        }
+                        self.snapshot = Self.takeSnapshot(of: box.cache, length: length, state: state)
+                        fedFrom = length
+                    }
+                    let feed = Carry(
+                        fedFrom == 0 ? lmInput : LMInput(tokens: MLXArray(Array(promptTokens[fedFrom...]))),
+                        state)
+                    if Self.tracesPrefix {
+                        await Self.tracePrefix(
+                            previous: self.cachedTokens, prompt: promptTokens,
+                            reused: reusedTokens, snapshot: self.snapshot?.length,
+                            container: container)
                     }
                     // The ledger is written before generation, not after: a
                     // turn that is cancelled still leaves its prompt in the
@@ -178,10 +243,11 @@ public actor MLXChatActor {
                     // trimmed away by the next reuse.
                     self.cache = box.cache
                     self.cachedTokens = promptTokens
-                    let stream = try await container.perform(nonSendable: feed) { context, input in
+                    let stream = try await container.perform(nonSendable: feed) { context, feed in
                         try MLXLMCommon.generate(
-                            input: input,
+                            input: feed.input,
                             cache: box.cache,
+                            state: feed.state,
                             parameters: params,
                             context: context
                         )
@@ -280,6 +346,7 @@ public actor MLXChatActor {
                     // than reuse a ledger that may have outrun it.
                     cache = nil
                     cachedTokens = []
+                    snapshot = nil
                     // Even on failure, kick off the idle countdown
                     // so a stuck container doesn't hold memory if
                     // the user gives up after one bad round.
@@ -303,6 +370,14 @@ public actor MLXChatActor {
         init(_ cache: [KVCache]) { self.cache = cache }
     }
 
+    /// An input and the model state it continues from, handed across the
+    /// same boundary for the same reason.
+    private final class Carry: @unchecked Sendable {
+        let input: LMInput
+        let state: LMOutput.State?
+        init(_ input: LMInput, _ state: LMOutput.State?) { self.input = input; self.state = state }
+    }
+
     /// How many leading tokens two prompts agree on.
     ///
     /// Capped one short of the new prompt: generation needs at least one
@@ -313,6 +388,71 @@ public actor MLXChatActor {
         var i = 0
         while i < limit, cached[i] == prompt[i] { i += 1 }
         return i
+    }
+
+    /// `KAOZ_TRACE_PREFIX=1` prints, for each turn, how far the prompt agrees
+    /// with the previous one and what the two say where they part — the
+    /// measure that decides where a cache snapshot can safely be taken.
+    static let tracesPrefix = ProcessInfo.processInfo.environment["KAOZ_TRACE_PREFIX"] == "1"
+
+    private static func tracePrefix(
+        previous: [Int], prompt: [Int], reused: Int, snapshot: Int?, container: ModelContainer
+    ) async {
+        var common = 0
+        while common < min(previous.count, prompt.count), previous[common] == prompt[common] {
+            common += 1
+        }
+        let wasTokens = Array(previous[common...].prefix(24))
+        let nowTokens = Array(prompt[common...].prefix(24))
+        let (was, now) = await container.perform { context in
+            (context.tokenizer.decode(tokenIds: wasTokens),
+             context.tokenizer.decode(tokenIds: nowTokens))
+        }
+        let line = """
+            [kaoz-prefix] prompt \(prompt.count) · previous \(previous.count) · \
+            common \(common) (previous − \(previous.count - common)) · reused \(reused) · \
+            snapshot \(snapshot.map(String.init) ?? "none")
+              was: \(was.debugDescription)
+              now: \(now.debugDescription)
+
+            """
+        FileHandle.standardError.write(Data(line.utf8))
+    }
+
+    /// Whether a leaf needs a copy to come back to a prefix: a recurrent state
+    /// cannot be cut back at all, and a sliding window cannot once its ring
+    /// has wrapped — which it may have by the next round.
+    static func needsSnapshot(_ leaf: KVCache) -> Bool {
+        !leaf.isTrimmable || leaf is RotatingKVCache
+    }
+
+    static func takeSnapshot(of cache: [KVCache], length: Int, state: LMOutput.State?) -> Snapshot {
+        var leaves: [Int: KVCache] = [:]
+        for (index, leaf) in cache.enumerated() where needsSnapshot(leaf) {
+            leaves[index] = leaf.copy()
+        }
+        return Snapshot(length: length, leaves: leaves, state: state)
+    }
+
+    /// The cache as it stood `snapshot.length` tokens in: the copied leaves
+    /// in their slots — copied again, so the snapshot outlives this round —
+    /// and every other leaf cut back to the same point. Nil when a leaf
+    /// cannot be, and the caller then starts from an empty cache.
+    static func restore(_ cache: [KVCache], from snapshot: Snapshot) -> [KVCache]? {
+        let length = snapshot.length
+        let cutBack = cache.indices.filter { snapshot.leaves[$0] == nil }
+        guard cutBack.allSatisfy({ cache[$0].offset >= length && cache[$0].isTrimmable(after: length) })
+        else { return nil }
+        var restored = cache
+        for index in cache.indices {
+            if let saved = snapshot.leaves[index] {
+                restored[index] = saved.copy()
+            } else {
+                let excess = cache[index].offset - length
+                guard excess == 0 || cache[index].trim(excess) == excess else { return nil }
+            }
+        }
+        return restored
     }
 
     /// Cuts every leaf of the cache back to `length` positions, or reports
@@ -344,6 +484,7 @@ public actor MLXChatActor {
         // larger half of what an unload is meant to hand back.
         cache = nil
         cachedTokens = []
+        snapshot = nil
     }
 
     /// Unloads every loaded chat container — the manual "décharger"
