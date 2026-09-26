@@ -210,9 +210,14 @@ public actor MLXChatActor {
                     // generation below. Media turns get none — the ledger does
                     // not describe what an image put in the cache.
                     self.snapshot = nil
+                    // The first step's share of the prompt, for the metrics:
+                    // MLX's own report only covers the second.
+                    var headTokens = 0
+                    var headSeconds: TimeInterval = 0
                     if !carriesMedia, box.cache.contains(where: Self.needsSnapshot) {
                         let length = max(fedFrom, promptTokens.count - Self.snapshotMargin)
                         if length > fedFrom {
+                            let headStart = ContinuousClock.now
                             let head = Carry(
                                 LMInput(tokens: MLXArray(Array(promptTokens[fedFrom..<length]))), state)
                             state = try await container.perform(nonSendable: head) { context, head in
@@ -223,6 +228,8 @@ public actor MLXChatActor {
                                     state: head.state, parameters: params)
                                 return Carry(head.input, iterator.state)
                             }.state
+                            headTokens = length - fedFrom
+                            headSeconds = Self.seconds(headStart.duration(to: .now))
                         }
                         self.snapshot = Self.takeSnapshot(of: box.cache, length: length, state: state)
                         fedFrom = length
@@ -320,7 +327,8 @@ public actor MLXChatActor {
                                 from: info,
                                 timeToFirstToken: firstChunkAt.map {
                                     Self.seconds(generationStart.duration(to: $0))
-                                }
+                                },
+                                headTokens: headTokens, headSeconds: headSeconds
                             )))
                         case .rejectedToolCall:
                             // Tool-call-shaped output the parser would not
@@ -500,14 +508,18 @@ public actor MLXChatActor {
     /// shape. It measures both phases itself — prefill and decode — so only
     /// the latency to the first token is ours to time; nil when the round
     /// emitted no chunk at all, a tool call straight out of the prompt.
+    /// `headTokens` / `headSeconds`: the part of the prompt prefilled before
+    /// the generation, up to the snapshot — MLX does not see it.
     public static func metrics(
         from info: GenerateCompletionInfo,
-        timeToFirstToken: TimeInterval?
+        timeToFirstToken: TimeInterval?,
+        headTokens: Int = 0,
+        headSeconds: TimeInterval = 0
     ) -> GenerationMetrics {
         var metrics = GenerationMetrics()
-        metrics.promptTokens = info.promptTokenCount
+        metrics.promptTokens = info.promptTokenCount + headTokens
         metrics.completionTokens = info.generationTokenCount
-        metrics.promptDuration = info.promptTime
+        metrics.promptDuration = info.promptTime + headSeconds
         metrics.generationDuration = info.generateTime
         metrics.timeToFirstToken = timeToFirstToken
         return metrics
