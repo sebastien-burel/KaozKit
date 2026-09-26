@@ -80,9 +80,17 @@ let package = Package(
         // compiled. Upstream fixed that between #438 and #544 in August.
         // A revision, never `branch:` — a branch would move the build under us.
         // Revisit when 3.31.5 ships; it should carry all of this.
+        //
+        // For now it comes from a fork: that same revision, 3e6ea1e, plus one
+        // commit that drops the MTP head from converted Qwen 3.5 VLM checkpoints
+        // (Qwen 3.8 "-MTP" conversions, ThinkingCap), which otherwise fail to
+        // load on unhandled `mtp` keys. The fix is proposed upstream on branch
+        // fix/qwen35-vlm-mtp-in-mlx-checkpoints; once merged, return to
+        // ml-explore at the first revision that carries it — and the app with it,
+        // which must name the same URL.
         .package(
-            url: "https://github.com/ml-explore/mlx-swift-lm",
-            revision: "3e6ea1ede1596f05c1715d6b82567619276e98f0"),
+            url: "https://github.com/sebastien-burel/mlx-swift-lm",
+            revision: "593ec484decac82ca66d8ceb1e05cda2d86988da"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
     ],

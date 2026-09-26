@@ -21,9 +21,9 @@
     {
       "identity" : "mlx-swift-lm",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ml-explore/mlx-swift-lm",
+      "location" : "https://github.com/sebastien-burel/mlx-swift-lm",
       "state" : {
-        "revision" : "3e6ea1ede1596f05c1715d6b82567619276e98f0"
+        "revision" : "593ec484decac82ca66d8ceb1e05cda2d86988da"
       }
     },
     {
