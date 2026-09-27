@@ -11,11 +11,14 @@ public struct SaveMemoryTool: Tool {
     public let spec = ToolSpec(
         name: "save_memory",
         description: """
-        Pins a small, stable preference about the user so it's always in
-        context: their name, preferred language, tone, how they like answers.
-        NOT for knowledge or facts about a topic, a person, or a project —
-        that goes in the wiki via write_wiki_page. Not for one-off chatter.
-        Provide a short title and the content to remember.
+        Pins a small, stable fact about the user themself so it's always in
+        context: their first name, preferred language, tone, how they like
+        answers. NOT for the people around them (family, colleagues), a
+        project or a topic — that goes in the wiki via write_wiki_page. Not
+        for one-off chatter. Never pin a value that changes with time — an
+        age, a time elapsed, "three weeks old": pin what it derives from (a
+        birth date, a start date). Saving under a title already pinned
+        replaces its content. Provide a short title and the content.
         """,
         inputSchemaJSON: """
         {
@@ -58,8 +61,23 @@ public struct SaveMemoryTool: Tool {
 
         let title = args.title?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = (title?.isEmpty == false) ? title! : Self.deriveTitle(from: content)
-        let memory = await store.add(title: resolvedTitle, content: content)
-        return "Saved \"\(memory.title)\" (id \(memory.id.uuidString))."
+
+        // A pinned "21 days" is wrong by next week. Refusing, with today's
+        // date, lets the model pin the date instead — or nothing.
+        guard !Memory.mentionsRelativeDuration(resolvedTitle),
+              !Memory.mentionsRelativeDuration(content)
+        else {
+            let today = Date.now.formatted(.iso8601.year().month().day())
+            throw ToolError.invalidArguments(reason: """
+                not saved: "\(content)" states a span of time, which is wrong \
+                soon after. Pin the date it derives from instead — today is \
+                \(today), so "3 weeks old" becomes "born around" the date 21 days \
+                before. Or don't pin it.
+                """)
+        }
+
+        let (memory, replaced) = await store.remember(title: resolvedTitle, content: content)
+        return "\(replaced ? "Updated" : "Saved") \"\(memory.title)\" (id \(memory.id.uuidString))."
     }
 
     /// Falls back to the first words of the content when no title is given.

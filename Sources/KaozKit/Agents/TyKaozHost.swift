@@ -266,7 +266,7 @@ public nonisolated final class TyKaozHost {
         let content = (params.count > 1 ? params[1] as? String : nil) ?? ""
         let memory = self.memory
         Task { @MainActor in
-            let saved = memory.add(title: title, content: content)
+            let saved = memory.remember(title: title, content: content).memory
             reply.resolve(AgentJSON.string(saved.id.uuidString))
         }
     }

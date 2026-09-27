@@ -43,6 +43,14 @@ public final class SemanticMemoryStore: MemoryStoring, MemoryRetrieving {
         return memory
     }
 
+    public func update(id: UUID, title: String, content: String) {
+        guard let index = entries.firstIndex(where: { $0.memory.id == id }) else { return }
+        entries[index].memory.title = title
+        entries[index].memory.content = content
+        entries[index].vector = nil   // the text changed; re-embedded on next search
+        save()
+    }
+
     public func delete(id: UUID) {
         entries.removeAll { $0.memory.id == id }
         save()

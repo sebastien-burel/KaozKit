@@ -25,6 +25,13 @@ final class CLIMemoryStore: MemoryStoring {
         return memory
     }
 
+    func update(id: UUID, title: String, content: String) {
+        guard let index = memories.firstIndex(where: { $0.id == id }) else { return }
+        memories[index].title = title
+        memories[index].content = content
+        save()
+    }
+
     func delete(id: UUID) {
         memories.removeAll { $0.id == id }
         save()
