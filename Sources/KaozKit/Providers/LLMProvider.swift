@@ -48,6 +48,11 @@ public enum StreamEvent: Sendable, Hashable {
     /// hung app. Carries no text — the UI words it. Any later event means
     /// the load is over.
     case loadingModel
+    /// The backend is reading the prompt before its first token: `processed`
+    /// of `total` tokens. Local backends only — on a large context and a
+    /// small machine, minutes that would otherwise read as a hung app. Any
+    /// other event means the reading is over.
+    case prefill(processed: Int, total: Int)
 }
 
 /// Performance metrics for one assistant turn. Every field is optional —

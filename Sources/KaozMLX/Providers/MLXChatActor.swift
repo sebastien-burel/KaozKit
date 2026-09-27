@@ -203,6 +203,10 @@ public actor MLXChatActor {
                         fedFrom = 0
                     }
                     let reusedTokens = fedFrom
+                    // What is left to read, said before reading it: on a long
+                    // context the prefill is the longest silence of the turn.
+                    let toRead = promptTokens.count - reusedTokens
+                    if toRead > 0 { continuation.yield(.prefill(processed: 0, total: toRead)) }
                     // A cache with leaves that cannot be cut back gets a
                     // snapshot short of the prompt's end, where the next round
                     // will still agree with this one: the prompt is prefilled
@@ -234,6 +238,15 @@ public actor MLXChatActor {
                         self.snapshot = Self.takeSnapshot(of: box.cache, length: length, state: state)
                         fedFrom = length
                     }
+                    // The rest of the prompt, chunk by chunk, after the head.
+                    // Positions, not tokens, for an image — counted from the
+                    // callback's own total so the bar still ends full.
+                    let headDone = headTokens
+                    var reporting = params
+                    reporting.prefill.progress = { processed, total in
+                        continuation.yield(.prefill(processed: headDone + processed, total: headDone + total))
+                    }
+                    let feedParams = reporting
                     let feed = Carry(
                         fedFrom == 0 ? lmInput : LMInput(tokens: MLXArray(Array(promptTokens[fedFrom...]))),
                         state)
@@ -255,7 +268,7 @@ public actor MLXChatActor {
                             input: feed.input,
                             cache: box.cache,
                             state: feed.state,
-                            parameters: params,
+                            parameters: feedParams,
                             context: context
                         )
                     }

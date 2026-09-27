@@ -17,6 +17,9 @@ public struct PluginToolDef: Equatable, Sendable {
     }
 
     public let name: String
+    /// What the user reads for this tool — « Prévisions météo » for
+    /// `weather_forecast`. Optional: without it the name is shown.
+    public var title: String?
     public let description: String
     public let inputSchemaJSON: String
     /// URL with two kinds of placeholder: `{arg}` filled from the model's tool
@@ -104,6 +107,7 @@ extension PluginToolDef {
         let headers = (dict["headers"] as? [String: String]) ?? [:]
 
         self.name = name
+        self.title = (dict["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.description = description
         self.inputSchemaJSON = schemaJSON
         self.urlTemplate = urlString
