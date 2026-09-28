@@ -13,6 +13,8 @@ public struct TyKaozCloudProvider: LLMProvider {
 
     public let apiKey: String
     public let model: String
+    /// Sent as `reasoning_effort`; nil leaves the choice to the server.
+    public let reasoningEffort: String?
 
     /// Whether the endpoint returns the answer whole, as the sovereign
     /// cloud does: it has no streaming transport yet.
@@ -26,13 +28,15 @@ public struct TyKaozCloudProvider: LLMProvider {
 
     public init(
         apiKey: String, model: String = TyKaozCloudProvider.defaultModel,
-        baseURL: URL = TyKaozCloudProvider.baseURL, session: URLSession = .shared
+        baseURL: URL = TyKaozCloudProvider.baseURL, reasoningEffort: String? = nil,
+        session: URLSession = .shared
     ) {
         let paris = baseURL == Self.parisBaseURL
         self.id = paris ? "tykaozCloudParis" : "tykaozCloud"
         self.displayName = paris ? "TyKaoz · France" : "TyKaoz · Germany"
         self.apiKey = apiKey
         self.model = model
+        self.reasoningEffort = reasoningEffort
         self.buffered = !paris
         self.client = OpenAICompatibleClient(baseURL: baseURL, apiKey: apiKey, session: session)
     }
@@ -99,7 +103,8 @@ public struct TyKaozCloudProvider: LLMProvider {
     /// instead: output tokens over the time from request to complete
     /// answer, latency included. Paris streams, and its metrics stand.
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
-        let source = client.chat(model: model, messages: messages, tools: tools)
+        let source = client.chat(
+            model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort)
         let buffered = buffered
         return AsyncThrowingStream { continuation in
             let task = Task {

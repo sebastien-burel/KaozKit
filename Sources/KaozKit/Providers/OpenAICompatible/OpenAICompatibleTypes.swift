@@ -68,6 +68,23 @@ public struct OpenAICompatibleChunk: Decodable {
 public struct OpenAICompatibleModelsResponse: Decodable {
     public struct Model: Decodable, Identifiable, Hashable {
         public let id: String
+        /// How far the model can be asked to reason, when the server says so
+        /// (TyKaoz Cloud does). Absent everywhere else.
+        public let reasoning: Reasoning?
+    }
+
+    /// The `reasoning_effort` values a model accepts, and the one the
+    /// server applies when the request carries none.
+    public struct Reasoning: Codable, Hashable, Sendable {
+        public let values: [String]
+        public let defaultValue: String
+
+        public init(values: [String], defaultValue: String) {
+            self.values = values
+            self.defaultValue = defaultValue
+        }
+
+        enum CodingKeys: String, CodingKey { case values, defaultValue = "default" }
     }
     public let data: [Model]
 }
