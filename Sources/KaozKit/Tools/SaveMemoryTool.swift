@@ -3,9 +3,14 @@ import Foundation
 /// Lets the model persist a fact worth remembering across conversations.
 public struct SaveMemoryTool: Tool {
     public let store: MemoryStoring
+    /// Whether facts about other people are refused and sent to the wiki.
+    /// Only where there is a wiki to write them to: refused with nowhere
+    /// else to go, the fact would simply be lost.
+    public let redirectsPeopleToWiki: Bool
 
-    public init(store: MemoryStoring) {
+    public init(store: MemoryStoring, redirectsPeopleToWiki: Bool = false) {
         self.store = store
+        self.redirectsPeopleToWiki = redirectsPeopleToWiki
     }
 
     public let spec = ToolSpec(
@@ -73,6 +78,16 @@ public struct SaveMemoryTool: Tool {
                 soon after. Pin the date it derives from instead — today is \
                 \(today), so "3 weeks old" becomes "born around" the date 21 days \
                 before. Or don't pin it.
+                """)
+        }
+
+        // The description says so, and models pin « ma fille Clara… » all
+        // the same: the refusal is what actually routes it.
+        if redirectsPeopleToWiki, Memory.isAboutSomeoneElse(title: resolvedTitle, content: content) {
+            throw ToolError.invalidArguments(reason: """
+                not saved: "\(content)" is about someone other than the user. \
+                Write it on that person's page with write_wiki_page (create \
+                the page if it does not exist) instead of pinning it.
                 """)
         }
 

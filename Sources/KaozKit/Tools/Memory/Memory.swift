@@ -39,6 +39,29 @@ public struct Memory: Identifiable, Hashable, Codable, Sendable {
         text.firstMatch(of: relativeDuration) != nil
     }
 
+    /// Whether an entry is about someone else — « ma fille Clara », « la
+    /// fille de Clara », "my wife", an entry titled « Enfants ». Those belong
+    /// on that person's page in the wiki, not pinned into every conversation.
+    public static func isAboutSomeoneElse(title: String, content: String) -> Bool {
+        if relationTitles.contains(titleKey(title)) { return true }
+        let text = "\(title) \(content)"
+        return text.firstMatch(of: relation) != nil || text.firstMatch(of: relationOf) != nil
+    }
+
+    private static let relationTitles: Set<String> = [
+        "enfants", "famille", "petits-enfants", "children", "family", "kids", "grandchildren"
+    ]
+
+    private static let relation = try! Regex(
+        #"\b(ma|mon|mes|notre|nos|my|our)\s+(filles?|fils|enfants?|femme|mari|épouse|époux|compagnon|compagne|conjointe?|frères?|sœurs?|soeurs?|père|mère|parents|grand-père|grand-mère|grands-parents|petites?-filles?|petits?-fils|petits?-enfants|neveux?|nièces?|oncles?|tantes?|cousins?|cousines?|belle-mère|beau-père|belle-fille|gendre|beau-frère|belle-sœur|collègues?|associée?s?|daughters?|sons?|children|kids?|wife|husband|partner|brothers?|sisters?|father|mother|dad|mum|mom|grand(?:daughter|son|child|mother|father)(?:ren|s)?|nephews?|nieces?|uncles?|aunts?|cousins?|colleagues?)\b"#
+    ).ignoresCase()
+
+    /// The same relations said of a third person: « la fille de Clara »,
+    /// « l'une des trois enfants de Sébastien », "the wife of".
+    private static let relationOf = try! Regex(
+        #"\b(filles?|fils|enfants?|femme|mari|épouse|époux|frères?|sœurs?|soeurs?|père|mère|parents|petites?-filles?|petits?-fils|petits?-enfants|neveux?|nièces?|daughters?|sons?|children|wife|husband|brothers?|sisters?|father|mother|grand(?:daughter|son|child)(?:ren|s)?)\s+(de|d'|d’|du|des|of)\b"#
+    ).ignoresCase()
+
     private static let relativeDuration = try! Regex(
         #"\b(\d+|une?|deux|trois|quatre|cinq|six|sept|huit|neuf|dix|a|one|two|three|four|five|seven|eight|nine|ten)\s+(jours?|semaines?|mois|ans?|années?|days?|weeks?|months?|years?)\b"#
     ).ignoresCase()
