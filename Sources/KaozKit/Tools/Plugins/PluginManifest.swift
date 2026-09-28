@@ -20,6 +20,9 @@ public struct PluginToolDef: Equatable, Sendable {
     /// What the user reads for this tool — « Prévisions météo » for
     /// `weather_forecast`. Optional: without it the name is shown.
     public var title: String?
+    /// One line for the user — « Prévisions à 7 jours pour un lieu ».
+    /// Optional: `description` is written for the model, and reads like it.
+    public var summary: String?
     public let description: String
     public let inputSchemaJSON: String
     /// URL with two kinds of placeholder: `{arg}` filled from the model's tool
@@ -29,6 +32,13 @@ public struct PluginToolDef: Equatable, Sendable {
     let urlTemplate: String
     let method: Method
     let headers: [String: String]
+
+    /// The server the tool calls, for the user to see where their arguments
+    /// go. Nil when the host itself is a placeholder.
+    public var host: String? {
+        guard let match = urlTemplate.firstMatch(of: /^[a-zA-Z]+:\/\/([^\/:?#{*]+)/) else { return nil }
+        return String(match.output.1).lowercased()
+    }
 
     /// Secret placeholder names (`***NAME***`) referenced in this tool's URL
     /// or headers. These are filled by the user and stored in the Keychain,
@@ -108,6 +118,7 @@ extension PluginToolDef {
 
         self.name = name
         self.title = (dict["title"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        self.summary = (dict["summary"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         self.description = description
         self.inputSchemaJSON = schemaJSON
         self.urlTemplate = urlString
