@@ -71,6 +71,25 @@ public struct OpenAICompatibleModelsResponse: Decodable {
         /// How far the model can be asked to reason, when the server says so
         /// (TyKaoz Cloud does). Absent everywhere else.
         public let reasoning: Reasoning?
+        /// "embedding" for a model served on `/embeddings`, when the server
+        /// says so (TyKaoz Cloud does); nil means chat, or unknown.
+        public let kind: String?
+        /// The vector lengths an embedding model can return, when the
+        /// server says so.
+        public let dimensions: Dimensions?
+    }
+
+    /// The lengths an embedding model returns, and the one it defaults to.
+    public struct Dimensions: Codable, Hashable, Sendable {
+        public let values: [Int]
+        public let defaultValue: Int
+
+        public init(values: [Int], defaultValue: Int) {
+            self.values = values
+            self.defaultValue = defaultValue
+        }
+
+        enum CodingKeys: String, CodingKey { case values, defaultValue = "default" }
     }
 
     /// The `reasoning_effort` values a model accepts, and the one the
