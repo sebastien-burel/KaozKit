@@ -48,11 +48,23 @@ public struct OpenAICompatibleClient: Sendable {
 
     // MARK: - Embeddings
 
-    /// OpenAI-standard `/embeddings` request. Used by the wiki when
-    /// the user routes embeddings through a vLLM / LM Studio /
-    /// llama.cpp server rather than Ollama.
-    func embed(model: String, inputs: [String]) async throws -> [[Float]] {
-        guard !inputs.isEmpty else { return [] }
+    /// What one `/embeddings` call returned: a vector per input, in input
+    /// order, and the tokens the provider billed when it says.
+    struct EmbeddingResult {
+        let vectors: [[Float]]
+        let promptTokens: Int?
+    }
+
+    /// OpenAI-standard `/embeddings` request, for any provider that speaks
+    /// it — OpenAI, Mistral, Qwen, Scaleway, TyKaoz Cloud, a local server.
+    /// `dimensions` asks a model that can shorten its vectors to do so; it
+    /// is left out otherwise, since some servers refuse the field.
+    ///
+    /// A 429 or a 5xx is tried again, twice, after the wait the server asks
+    /// for (`Retry-After`, at most 30 s) or a growing one: indexing a wiki is
+    /// a burst, and a rate limit is the expected answer to it.
+    func embed(model: String, inputs: [String], dimensions: Int? = nil) async throws -> EmbeddingResult {
+        guard !inputs.isEmpty else { return EmbeddingResult(vectors: [], promptTokens: 0) }
 
         var request = URLRequest(url: baseURL.appending(path: "/embeddings"))
         request.httpMethod = "POST"
@@ -65,42 +77,64 @@ public struct OpenAICompatibleClient: Sendable {
             request.setValue(value, forHTTPHeaderField: field)
         }
         request.timeoutInterval = 60
+        request.httpBody = try Self.embeddingBody(model: model, inputs: inputs, dimensions: dimensions)
 
-        let body: [String: Any] = ["model": model, "input": inputs]
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch let urlError as URLError {
-            throw OpenAICompatibleError.network(message: urlError.localizedDescription)
+        var attempt = 0
+        while true {
+            attempt += 1
+            let data: Data
+            let response: URLResponse
+            do {
+                (data, response) = try await session.data(for: request)
+            } catch let urlError as URLError {
+                throw OpenAICompatibleError.network(message: urlError.localizedDescription)
+            }
+            guard let http = response as? HTTPURLResponse else {
+                throw OpenAICompatibleError.network(message: "non-HTTP response")
+            }
+            if (http.statusCode == 429 || http.statusCode >= 500), attempt < 3 {
+                let asked = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+                try await Task.sleep(for: .seconds(min(asked ?? Double(attempt * 2), 30)))
+                continue
+            }
+            guard (200..<300).contains(http.statusCode) else {
+                let body = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                throw OpenAICompatibleError.http(
+                    status: http.statusCode,
+                    body: (body?.isEmpty == false) ? body : nil
+                )
+            }
+            return try Self.decodeEmbeddings(data)
         }
+    }
 
-        guard let http = response as? HTTPURLResponse else {
-            throw OpenAICompatibleError.network(message: "non-HTTP response")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let body = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            throw OpenAICompatibleError.http(
-                status: http.statusCode,
-                body: (body?.isEmpty == false) ? body : nil
-            )
-        }
+    static func embeddingBody(model: String, inputs: [String], dimensions: Int?) throws -> Data {
+        var body: [String: Any] = ["model": model, "input": inputs]
+        if let dimensions { body["dimensions"] = dimensions }
+        return try JSONSerialization.data(withJSONObject: body)
+    }
 
+    static func decodeEmbeddings(_ data: Data) throws -> EmbeddingResult {
         struct EmbedResponse: Decodable {
             struct Item: Decodable {
                 let embedding: [Float]
                 let index: Int
             }
+            struct Usage: Decodable {
+                let promptTokens: Int?
+                enum CodingKeys: String, CodingKey { case promptTokens = "prompt_tokens" }
+            }
             let data: [Item]
+            let usage: Usage?
         }
         do {
             let decoded = try JSONDecoder().decode(EmbedResponse.self, from: data)
             // The OpenAI spec doesn't guarantee order — sort by `index`
             // so callers can zip results back to their input array.
-            return decoded.data.sorted { $0.index < $1.index }.map(\.embedding)
+            return EmbeddingResult(
+                vectors: decoded.data.sorted { $0.index < $1.index }.map(\.embedding),
+                promptTokens: decoded.usage?.promptTokens)
         } catch {
             throw OpenAICompatibleError.decoding(message: error.localizedDescription)
         }

@@ -14,4 +14,11 @@ public protocol EmbeddingProvider: Sendable {
     /// Embeds a batch of texts. Returns vectors in the same order;
     /// throws on transport or model errors.
     func embed(_ texts: [String]) async throws -> [[Float]]
+    /// Tokens billed so far by a provider that counts them; nil for one
+    /// that runs locally or does not say.
+    var tokensUsed: Int? { get }
+}
+
+extension EmbeddingProvider {
+    public var tokensUsed: Int? { nil }
 }
