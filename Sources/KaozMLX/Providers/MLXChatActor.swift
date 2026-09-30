@@ -174,6 +174,8 @@ public actor MLXChatActor {
                     // is just prose to it), and it rejects an assistant
                     // message without `content`.
                     let isApertus = modelID.localizedCaseInsensitiveContains("apertus")
+                    let isGemma4 = modelID.localizedCaseInsensitiveContains("gemma-4")
+                        || modelID.localizedCaseInsensitiveContains("gemma4")
                     let mappedTools = tools.isEmpty ? nil : tools.compactMap(Self.mapTool)
                     let context = reasoningEffortContext(reasoningEffort)
                     let userInput: UserInput
@@ -189,7 +191,7 @@ public actor MLXChatActor {
                             additionalContext: context)
                     } else {
                         userInput = UserInput(
-                            chat: Self.mapMessages(messages),
+                            chat: isGemma4 ? Self.mapMessagesGemma4(messages) : Self.mapMessages(messages),
                             tools: mappedTools,
                             additionalContext: context)
                     }
@@ -331,8 +333,7 @@ public actor MLXChatActor {
                     // spliced out; everything else (Qwen 3, DeepSeek-R1…)
                     // emits `<think>` reasoning tags. Either way the
                     // buffered parser strips them from the answer.
-                    let needsGemma4 = modelID.localizedCaseInsensitiveContains("gemma-4")
-                        || modelID.localizedCaseInsensitiveContains("gemma4")
+                    let needsGemma4 = isGemma4
                     let blocks = needsGemma4
                         ? Self.gemma4Blocks
                         : isApertus ? Self.apertusBlocks : Self.thinkBlocks
@@ -892,6 +893,52 @@ public actor MLXChatActor {
         }
     }
 
+    /// Gemma 4's template renders a tool result only right after an
+    /// assistant message carrying structured `tool_calls`, matched by id.
+    /// Serialised as text, as `mapMessages` does, every result was left out
+    /// of the prompt: the model never saw what its tools returned, called
+    /// them again, then answered from memory. Here the calls of one round
+    /// share one assistant message, each result names its call, and the
+    /// stray `<tool_call|>` a turn used to keep is cleaned from the history,
+    /// with the assistant messages left empty.
+    /// Everything else — images included — is `mapMessages`'s.
+    private static func mapMessagesGemma4(_ messages: [ChatMessage]) -> [Chat.Message] {
+        var out: [Chat.Message] = []
+        var round: [MLXLMCommon.ToolCall] = []
+        var names: [String: String] = [:]
+        func closeRound() {
+            if !round.isEmpty { out.append(.assistant("", toolCalls: round)) }
+            round = []
+        }
+        for (message, mapped) in zip(messages, mapMessages(messages)) {
+            switch message.role {
+            case .toolCall:
+                let name = message.toolName ?? "unknown"
+                if let id = message.toolCallID { names[id] = name }
+                round.append(MLXLMCommon.ToolCall(
+                    function: .init(name: name, arguments: sendableJSONObject(message.content)),
+                    id: message.toolCallID))
+            case .toolResult:
+                closeRound()
+                out.append(.tool(message.content, id: message.toolCallID,
+                                 name: message.toolCallID.flatMap { names[$0] }))
+            case .assistant:
+                closeRound()
+                // `Chat.Message` carries no reasoning: an assistant message
+                // with no text would only close the model's turn in the
+                // middle of its tool rounds.
+                let content = message.content.replacingOccurrences(of: "<tool_call|>", with: "")
+                if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+                out.append(.assistant(content, images: mapped.images, videos: mapped.videos))
+            default:
+                closeRound()
+                out.append(mapped)
+            }
+        }
+        closeRound()
+        return out
+    }
+
     /// Builds raw Harmony message dicts for gpt-oss. The gpt-oss chat
     /// template (unlike `Chat.Message`, which is role + content only)
     /// requires assistant tool calls in a structured `tool_calls`
@@ -1178,6 +1225,15 @@ public actor MLXChatActor {
                 state.openMarker = ""
                 state.reasoningStarted = false
             } else {
+                // A tool-call close with no call open is noise: Gemma 4's
+                // `<tool_call|>`, left behind once the library has parsed
+                // the call itself. Only the special-token forms — `|>` —
+                // since `</tool_call>` may be literal text.
+                for block in blocks where block.kind == .toolCall {
+                    for close in block.closes where close.hasSuffix("|>") {
+                        state.buffer = state.buffer.replacingOccurrences(of: close, with: "")
+                    }
+                }
                 // Outside any block — scan for the earliest open
                 // marker of any kind.
                 var earliest: (range: Range<String.Index>, block: StreamBlock, marker: String)? = nil
@@ -1548,6 +1604,11 @@ public actor MLXChatActor {
     /// without going through the full streaming loop.
     static public func parseGemma4PayloadForTests(_ payload: String) -> (name: String, argumentsJSON: String)? {
         parseGemma4Payload(payload)
+    }
+
+    /// Test-only: the Gemma 4 history as its template receives it.
+    static public func mapMessagesGemma4ForTests(_ messages: [ChatMessage]) -> [[String: any Sendable]] {
+        Gemma4MessageGenerator().generate(messages: mapMessagesGemma4(messages))
     }
 
     static public func mapMessagesApertusForTests(_ messages: [ChatMessage]) -> [[String: any Sendable]] {
