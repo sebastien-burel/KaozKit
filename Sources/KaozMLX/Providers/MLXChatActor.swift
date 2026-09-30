@@ -314,6 +314,8 @@ public actor MLXChatActor {
                             modelConfiguration: context.configuration,
                             tokenizer: context.tokenizer,
                             iterator: iterator,
+                            tools: Self.decoderTools(
+                                mappedTools, format: context.configuration.toolCallFormat),
                             toolCallPolicy: feedParams.toolCallPolicy)
                     }
                     generation = decoding
@@ -1773,6 +1775,21 @@ public actor MLXChatActor {
             i = scope.index(after: i)
         }
         return nil
+    }
+
+    /// The tool schemas handed to the library's decoder. The framed protocols
+    /// — Onyx (Muse Glimmer) and Harmony (gpt-oss) — accept a call only to a
+    /// tool whose schema they hold: without them, every call was rejected and
+    /// the turn came back empty. The text formats get none: given schemas, the
+    /// library also retypes their arguments and drops undeclared tools, a
+    /// change of behaviour for Qwen and the others left for a separate step.
+    static func decoderTools(
+        _ tools: [MLXLMCommon.ToolSpec]?, format: ToolCallFormat?
+    ) -> [MLXLMCommon.ToolSpec]? {
+        switch format {
+        case .atem?, .gptOSS?: return tools
+        default: return nil
+        }
     }
 
     /// Wraps a TyKaoz `ToolSpec` in the OpenAI-style schema dict
