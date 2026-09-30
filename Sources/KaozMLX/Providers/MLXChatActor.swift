@@ -196,7 +196,8 @@ public actor MLXChatActor {
                     let lmInput = try await container.prepare(input: userInput)
                     let params = GenerateParameters(
                         maxTokens: 4096,
-                        temperature: 0.7
+                        temperature: 0.7,
+                        seed: Self.samplingSeed
                     )
                     // Reuse what the last turn already prefilled, when this
                     // prompt starts with it. Media is excluded on purpose:
@@ -462,6 +463,17 @@ public actor MLXChatActor {
         while i < limit, cached[i] == prompt[i] { i += 1 }
         return i
     }
+
+    /// `KAOZ_MLX_SEED=<n>` makes sampling reproducible: the same prompt draws
+    /// the same tokens, at the usual temperature. Debug builds only — the wiki
+    /// evaluation uses it to replay a run; a shipped app always samples freely.
+    static let samplingSeed: UInt64? = {
+        #if DEBUG
+        return ProcessInfo.processInfo.environment["KAOZ_MLX_SEED"].flatMap(UInt64.init)
+        #else
+        return nil
+        #endif
+    }()
 
     /// `KAOZ_TRACE_PREFIX=1` prints, for each turn, how far the prompt agrees
     /// with the previous one and what the two say where they part — the
