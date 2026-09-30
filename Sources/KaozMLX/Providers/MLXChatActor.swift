@@ -73,6 +73,15 @@ public actor MLXChatActor {
     /// again every round on those models.
     private var snapshot: Snapshot?
 
+    /// The turn that owns the cache, if any: done once its generation has
+    /// stopped writing. Every turn waits for the one before it, so two turns
+    /// never trim and fill the same cache at once — the duplicate title
+    /// request, a background ingestion during a chat, a stop followed at once
+    /// by a new send. They used to, and MLX crashed on the first attention
+    /// layer whose cache had moved under the mask
+    /// (`[broadcast_shapes] Shapes (7,156) and (1,16,7,157)`).
+    private var turnInFlight: Task<Void, Never>?
+
     struct Snapshot {
         /// How many prompt tokens the copies hold.
         let length: Int
@@ -115,10 +124,28 @@ public actor MLXChatActor {
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                // Wait for the turn before this one to hand the cache back.
+                // Taken and replaced without a suspension in between, so no
+                // two turns can hold it.
+                let previous = turnInFlight
+                let (released, release) = AsyncStream<Void>.makeStream()
+                turnInFlight = Task { for await _ in released {} }
+                await previous?.value
+                guard !Task.isCancelled else {
+                    continuation.finish()
+                    release.finish()
+                    return
+                }
+
                 // Cancel any pending unload — fresh activity.
                 idleUnloadTask?.cancel()
                 idleUnloadTask = nil
 
+                // The decoding loop, which outlives the stream: it only sees
+                // a cancellation between two tokens, and writes each one into
+                // the cache. The turn ends when it does, not when the stream
+                // does.
+                var generation: Task<Void, Never>?
                 do {
                     // Say so before the wait, not after: loading a local
                     // model is the longest silence of the turn, and it comes
@@ -182,7 +209,18 @@ public actor MLXChatActor {
                     let reusable = carriesMedia
                         ? 0
                         : Self.commonPrefixLength(self.cachedTokens, promptTokens)
-                    let live = self.cache
+                    var live = self.cache
+                    // Every leaf that can be cut back must stand at the same
+                    // position: the model builds one mask for all of them, and
+                    // a leaf one token off crashes MLX instead of raising.
+                    if let cache = live, !Self.offsetsAgree(cache) {
+                        if Self.tracesPrefix {
+                            FileHandle.standardError.write(Data(
+                                "[kaozkit-prefix] cache offsets disagree \(cache.map(\.offset)) — starting fresh\n".utf8))
+                        }
+                        live = nil
+                        self.snapshot = nil
+                    }
                     let box: CacheBox
                     // How many prompt tokens the cache already holds, and the
                     // model state that goes with them.
@@ -263,15 +301,21 @@ public actor MLXChatActor {
                     // trimmed away by the next reuse.
                     self.cache = box.cache
                     self.cachedTokens = promptTokens
-                    let stream = try await container.perform(nonSendable: feed) { context, feed in
-                        try MLXLMCommon.generate(
-                            input: feed.input,
-                            cache: box.cache,
-                            state: feed.state,
-                            parameters: feedParams,
-                            context: context
-                        )
+                    // `generate` with its task kept: the library's own
+                    // `generate` drops it, and nothing then says when the
+                    // cache is free again.
+                    let (stream, decoding) = try await container.perform(nonSendable: feed) { context, feed in
+                        let iterator = try TokenIterator(
+                            input: feed.input, model: context.model, cache: box.cache,
+                            state: feed.state, parameters: feedParams)
+                        return generateTask(
+                            promptTokenCount: feed.input.text.tokens.size,
+                            modelConfiguration: context.configuration,
+                            tokenizer: context.tokenizer,
+                            iterator: iterator,
+                            toolCallPolicy: feedParams.toolCallPolicy)
                     }
+                    generation = decoding
                     // Stateful intercept layer for Gemma 4. MLX's
                     // GemmaFunctionParser targets the Gemma 3
                     // tokens (`<start_function_call>`,
@@ -375,6 +419,14 @@ public actor MLXChatActor {
                     scheduleIdleUnload()
                     continuation.finish(throwing: error)
                 }
+                // A stopped turn leaves its decoding loop one token from
+                // noticing: stop it, and wait until it has before the next
+                // turn may touch the cache.
+                if let generation {
+                    if Task.isCancelled { generation.cancel() }
+                    await generation.value
+                }
+                release.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
@@ -445,6 +497,13 @@ public actor MLXChatActor {
     /// has wrapped — which it may have by the next round.
     static func needsSnapshot(_ leaf: KVCache) -> Bool {
         !leaf.isTrimmable || leaf is RotatingKVCache
+    }
+
+    /// Whether every leaf that can be cut back stands at the same position.
+    /// Leaves that need a snapshot keep their own counters — a recurrent
+    /// state, a ring — and are left out.
+    static func offsetsAgree(_ cache: [KVCache]) -> Bool {
+        Set(cache.filter { !needsSnapshot($0) }.map(\.offset)).count <= 1
     }
 
     static func takeSnapshot(of cache: [KVCache], length: Int, state: LMOutput.State?) -> Snapshot {
