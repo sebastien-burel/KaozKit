@@ -64,33 +64,20 @@ let package = Package(
         // package's build, so a drift here mismatches the Metal kernels. Bumping
         // this means bumping the app and re-running that script, in that order.
         //
-        // 0.31.6 is required by the mlx-swift-lm revision below, which calls
-        // `MLXArray.maskFill` and `DType.greatestFiniteMagnitudeArray` — both
-        // added after 0.31.4.
-        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.31.6"),
-        // mlx-swift-lm rides an unreleased revision, deliberately. No published
-        // tag loads both of our Gemma 4 checkpoints: 3.31.3 has no
-        // `gemma4_unified` (the 12B), and 3.31.4's sanitizer drops the redundant
-        // k_proj/v_proj of KV-shared layers but not their k_norm, so the E4B
-        // fails on `layers.24.self_attn.k_norm`. Any revision past late July
-        // drops all three. This one (2026-09-14) is the first we needed after
-        // the final macOS 27 SDK: the July revision was written against the
-        // betas, and MLXFoundationModels — pulled in by MLXHuggingFace through
-        // the default-on `FoundationModelsIntegration` trait — no longer
-        // compiled. Upstream fixed that between #438 and #544 in August.
-        // A revision, never `branch:` — a branch would move the build under us.
-        // Revisit when 3.31.5 ships; it should carry all of this.
-        //
-        // For now it comes from a fork: that same revision, 3e6ea1e, plus one
-        // commit that drops the MTP head from converted Qwen 3.5 VLM checkpoints
-        // that keep it (ThinkingCap-Qwen3.8), which otherwise fail to load on
-        // unhandled `mtp` keys. The fix is proposed upstream on branch
-        // fix/qwen35-vlm-mtp-in-mlx-checkpoints; once merged, return to
-        // ml-explore at the first revision that carries it — and the app with it,
-        // which must name the same URL.
+        // 0.32.3 is what mlx-swift-lm 3.32.3 requires (#657, an SDK issue).
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.32.3"),
+        // mlx-swift-lm 3.32.3, from a fork: the release plus one commit that
+        // drops the MTP head from converted Qwen 3.5 VLM checkpoints that keep
+        // it (ThinkingCap-Qwen3.8), which otherwise fail to load on unhandled
+        // `mtp` keys. The fix is proposed upstream (ml-explore/mlx-swift-lm#642,
+        // branch fix/qwen35-vlm-mtp-in-mlx-checkpoints); once merged, return to
+        // ml-explore at the first release that carries it — and the app with
+        // it, which must name the same URL. The fork's branch is
+        // kaozkit/3.32.3. A revision, never `branch:` — a branch would move the
+        // build under us.
         .package(
             url: "https://github.com/sebastien-burel/mlx-swift-lm",
-            revision: "593ec484decac82ca66d8ceb1e05cda2d86988da"),
+            revision: "23c27becef69ed939f22d407bff175cd310c29ee"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
     ],
