@@ -1068,6 +1068,9 @@ public actor MLXChatActor {
         let opens: [String]
         let closes: [String]
         let kind: StreamBlockKind
+        /// The block opens with a name on its own line — Gemma 4's
+        /// `<|channel>thought` — which is a label, not content.
+        var labelled = false
     }
     /// Inline tokens Gemma 4 emits that its chat template fails to
     /// suppress — tool-call envelopes and internal-monologue channels.
@@ -1100,7 +1103,8 @@ public actor MLXChatActor {
         StreamBlock(
             opens: ["<|channel>"],
             closes: ["<channel|>"],
-            kind: .reasoning
+            kind: .reasoning,
+            labelled: true
         ),
     ]
     /// Reasoning tags used by Qwen 3, DeepSeek-R1, QwQ and friends.
@@ -1171,6 +1175,8 @@ public actor MLXChatActor {
         /// True once the active reasoning block emitted a delta — only the
         /// first slice gets its leading whitespace trimmed.
         var reasoningStarted = false
+        /// True once a labelled block's label line was dealt with.
+        var labelHandled = false
     }
 
     /// Streaming-aware marker stripper. `blocks` is the marker set for the
@@ -1206,6 +1212,15 @@ public actor MLXChatActor {
                     // long as the chain of thought runs. Tool calls and
                     // suppressed envelopes must stay atomic, so they wait.
                     if block.kind == .reasoning {
+                        // The label's line first: wait until it is whole,
+                        // then drop it — it is no part of the thought.
+                        if block.labelled, !state.labelHandled {
+                            guard let newline = state.buffer.firstIndex(of: "\n") else { return }
+                            if isChannelLabel(state.buffer[..<newline]) {
+                                state.buffer = String(state.buffer[state.buffer.index(after: newline)...])
+                            }
+                            state.labelHandled = true
+                        }
                         let maxCloseLen = block.closes.map(\.count).max() ?? 0
                         if state.buffer.count > maxCloseLen {
                             let safeEnd = state.buffer.index(
@@ -1221,7 +1236,8 @@ public actor MLXChatActor {
                     }
                     return
                 }
-                let payload = String(state.buffer[..<closeRange.lowerBound])
+                var payload = String(state.buffer[..<closeRange.lowerBound])
+                if block.labelled, !state.labelHandled { payload = droppingChannelLabel(payload) }
                 let raw = state.openMarker + String(state.buffer[..<closeRange.upperBound])
                 emitStreamBlock(
                     block.kind,
@@ -1234,6 +1250,7 @@ public actor MLXChatActor {
                 state.block = nil
                 state.openMarker = ""
                 state.reasoningStarted = false
+                state.labelHandled = false
             } else {
                 // A tool-call close with no call open is noise: Gemma 4's
                 // `<tool_call|>`, left behind once the library has parsed
@@ -1265,6 +1282,7 @@ public actor MLXChatActor {
                     state.block = found.block
                     state.openMarker = found.marker
                     state.reasoningStarted = false
+                state.labelHandled = false
                 } else {
                     // No open marker. Emit everything except a tail
                     // big enough to hide a split-across-chunks marker.
@@ -1301,11 +1319,28 @@ public actor MLXChatActor {
         }
         emitStreamBlock(
             block.kind,
-            payload: rest,
+            payload: block.labelled && !state.labelHandled ? droppingChannelLabel(rest) : rest,
             raw: state.openMarker + rest,
             state: &state,
             continuation: continuation
         )
+    }
+
+    /// A channel's name: one short word, nothing else. Gemma 4 writes
+    /// `<|channel>thought` and, with nothing to think, closes it right away —
+    /// shown as is, an empty "Réflexion" panel read « thought ».
+    private static func isChannelLabel(_ line: Substring) -> Bool {
+        let word = line.trimmingCharacters(in: .whitespaces)
+        return !word.isEmpty && word.count <= 24 && word.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" }
+    }
+
+    /// A labelled block's content without its label: the first line when it
+    /// is one, or nothing when the label is all there is.
+    private static func droppingChannelLabel(_ payload: String) -> String {
+        if let newline = payload.firstIndex(of: "\n") {
+            return isChannelLabel(payload[..<newline]) ? String(payload[payload.index(after: newline)...]) : payload
+        }
+        return isChannelLabel(Substring(payload)) ? "" : payload
     }
 
     /// Routes a closed block to the right `StreamEvent`.
