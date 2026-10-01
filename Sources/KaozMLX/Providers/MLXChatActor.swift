@@ -688,7 +688,11 @@ public actor MLXChatActor {
 
     private func loadIfNeeded() async throws -> ModelContainer {
         if let container { return container }
-        _ = try await MLXModelStore.shared.download(modelID: modelID)
+        // The snapshot on disk, downloaded first if it is not. Loading from
+        // it rather than by id spares the hub a query on every load — which
+        // told Hugging Face what model the user runs, and when, for a model
+        // already installed.
+        let snapshot = try await MLXModelStore.shared.download(modelID: modelID)
 
         // A chat model with no chat template would make swift-transformers
         // fall back to raw-text formatting and then hard-crash
@@ -715,7 +719,7 @@ public actor MLXChatActor {
         let isVision = entry?.isVision
             ?? localDir.map(Self.declaresVisionTower(in:))
             ?? false
-        let config = ModelConfiguration(id: modelID, revision: entry?.revision ?? "main")
+        let config = ModelConfiguration(directory: snapshot)
         // Our Apertus copy replaces the package's, which cannot load the v1.5
         // conversions (see KaozApertusModel.swift). Registering on every load
         // is harmless: the creator replaces itself.

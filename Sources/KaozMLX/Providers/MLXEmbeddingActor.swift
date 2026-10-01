@@ -82,13 +82,14 @@ public actor MLXEmbeddingActor {
         // Make sure the model is on disk first — the factory will
         // also download if missing, but going through MLXModelStore
         // gives us our disk-space pre-flight + presence checks.
-        _ = try await MLXModelStore.shared.download(modelID: modelID)
+        // Loaded from the snapshot on disk, not by id: by id, the hub is asked
+        // to resolve the revision on every load, for a model already here.
+        let snapshot = try await MLXModelStore.shared.download(modelID: modelID)
 
-        let revision = await ModelCatalogService.shared.entry(forID: modelID)?.revision ?? "main"
         let loaded = try await EmbedderModelFactory.shared.loadContainer(
             from: downloader,
             using: tokenizerLoader,
-            configuration: ModelConfiguration(id: modelID, revision: revision)
+            configuration: ModelConfiguration(directory: snapshot)
         ) { _ in
             // No progress reporting needed at load-time — the
             // download (above) already reported, and the actual
