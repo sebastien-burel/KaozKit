@@ -176,6 +176,10 @@ public actor MLXChatActor {
                     let isApertus = modelID.localizedCaseInsensitiveContains("apertus")
                     let isGemma4 = modelID.localizedCaseInsensitiveContains("gemma-4")
                         || modelID.localizedCaseInsensitiveContains("gemma4")
+                    // Templates that show a tool result only after a structured
+                    // call: Gemma 4's, and the Onyx models' (Muse Glimmer).
+                    let structuredToolHistory = isGemma4
+                        ? true : (await container.configuration.toolCallFormat) == .atem
                     let mappedTools = tools.isEmpty ? nil : tools.compactMap(Self.mapTool)
                     let context = reasoningEffortContext(reasoningEffort)
                     let userInput: UserInput
@@ -191,7 +195,8 @@ public actor MLXChatActor {
                             additionalContext: context)
                     } else {
                         userInput = UserInput(
-                            chat: isGemma4 ? Self.mapMessagesGemma4(messages) : Self.mapMessages(messages),
+                            chat: structuredToolHistory
+                                ? Self.mapMessagesWithToolCalls(messages) : Self.mapMessages(messages),
                             tools: mappedTools,
                             additionalContext: context)
                     }
@@ -901,12 +906,13 @@ public actor MLXChatActor {
     /// assistant message carrying structured `tool_calls`, matched by id.
     /// Serialised as text, as `mapMessages` does, every result was left out
     /// of the prompt: the model never saw what its tools returned, called
-    /// them again, then answered from memory. Here the calls of one round
+    /// them again, then answered from memory. Muse Glimmer's Onyx template
+    /// wants the same, and given calls as text, it answered with one. Here the calls of one round
     /// share one assistant message, each result names its call, and the
     /// stray `<tool_call|>` a turn used to keep is cleaned from the history,
     /// with the assistant messages left empty.
     /// Everything else — images included — is `mapMessages`'s.
-    private static func mapMessagesGemma4(_ messages: [ChatMessage]) -> [Chat.Message] {
+    private static func mapMessagesWithToolCalls(_ messages: [ChatMessage]) -> [Chat.Message] {
         var out: [Chat.Message] = []
         var round: [MLXLMCommon.ToolCall] = []
         var names: [String: String] = [:]
@@ -1610,9 +1616,9 @@ public actor MLXChatActor {
         parseGemma4Payload(payload)
     }
 
-    /// Test-only: the Gemma 4 history as its template receives it.
-    static public func mapMessagesGemma4ForTests(_ messages: [ChatMessage]) -> [[String: any Sendable]] {
-        Gemma4MessageGenerator().generate(messages: mapMessagesGemma4(messages))
+    /// Test-only: a structured tool history as Gemma 4's template receives it.
+    static public func mapMessagesWithToolCallsForTests(_ messages: [ChatMessage]) -> [[String: any Sendable]] {
+        Gemma4MessageGenerator().generate(messages: mapMessagesWithToolCalls(messages))
     }
 
     static public func mapMessagesApertusForTests(_ messages: [ChatMessage]) -> [[String: any Sendable]] {
