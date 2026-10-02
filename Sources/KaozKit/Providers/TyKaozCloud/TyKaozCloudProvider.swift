@@ -1,10 +1,11 @@
 import Foundation
 
 /// TyKaoz Cloud: Haruni's endpoints, over an OpenAI-compatible API. One key
-/// opens both and spends one budget. The AWS European Sovereign Cloud
-/// (Brandenburg) serves the Amazon Nova models; Paris serves Scaleway's.
-/// The requests are processed in two countries, so the app shows two
-/// providers, and each value of this type talks to one endpoint.
+/// opens all three and spends one budget. The AWS European Sovereign Cloud
+/// (Brandenburg) serves the Amazon Nova models; Paris serves Scaleway's;
+/// Switzerland serves Infomaniak's, through Paris. The requests are
+/// processed in three countries, so the app shows three providers, and
+/// each value of this type talks to one endpoint.
 ///
 /// Owns the endpoints so the settings UI doesn't keep its own copy of the URLs.
 public struct TyKaozCloudProvider: LLMProvider {
@@ -23,21 +24,28 @@ public struct TyKaozCloudProvider: LLMProvider {
 
     public static let baseURL = URL(string: "https://cloud.tykaoz.bzh/v1")!
     public static let parisBaseURL = URL(string: "https://fr.cloud.tykaoz.bzh/v1")!
+    public static let swissBaseURL = URL(string: "https://ch.cloud.tykaoz.bzh/v1")!
     public static let defaultModel = "Nova Lite"
     public static let parisDefaultModel = "Mistral Small 3.2"
+    public static let swissDefaultModel = "Mistral Small 4"
 
     public init(
         apiKey: String, model: String = TyKaozCloudProvider.defaultModel,
         baseURL: URL = TyKaozCloudProvider.baseURL, reasoningEffort: String? = nil,
         session: URLSession = .shared
     ) {
-        let paris = baseURL == Self.parisBaseURL
-        self.id = paris ? "tykaozCloudParis" : "tykaozCloud"
-        self.displayName = paris ? "TyKaoz · France" : "TyKaoz · Germany"
+        switch baseURL {
+        case Self.parisBaseURL:
+            (id, displayName) = ("tykaozCloudParis", "TyKaoz · France")
+        case Self.swissBaseURL:
+            (id, displayName) = ("tykaozCloudSwiss", "TyKaoz · Switzerland")
+        default:
+            (id, displayName) = ("tykaozCloud", "TyKaoz · Germany")
+        }
         self.apiKey = apiKey
         self.model = model
         self.reasoningEffort = reasoningEffort
-        self.buffered = !paris
+        self.buffered = id == "tykaozCloud"
         self.client = OpenAICompatibleClient(baseURL: baseURL, apiKey: apiKey, session: session)
     }
 
@@ -101,7 +109,8 @@ public struct TyKaozCloudProvider: LLMProvider {
     /// first-to-last-token window only clocks the download and reads as an
     /// absurd speed. The throughput shown there is the whole round trip
     /// instead: output tokens over the time from request to complete
-    /// answer, latency included. Paris streams, and its metrics stand.
+    /// answer, latency included. Paris and Switzerland stream, and their
+    /// metrics stand.
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
         let source = client.chat(
             model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort)
