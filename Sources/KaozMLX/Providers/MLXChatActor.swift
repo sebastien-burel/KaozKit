@@ -315,7 +315,9 @@ public actor MLXChatActor {
                     let (stream, decoding) = try await container.perform(nonSendable: feed) { context, feed in
                         let iterator = try TokenIterator(
                             input: feed.input, model: context.model, cache: box.cache,
-                            state: feed.state, parameters: feedParams)
+                            state: feed.state, parameters: feedParams,
+                            components: Self.thinkingBudget(
+                                context.configuration.reasoningConfig, tokenizer: context.tokenizer))
                         return generateTask(
                             promptTokenCount: feed.input.text.tokens.size,
                             modelConfiguration: context.configuration,
@@ -470,6 +472,46 @@ public actor MLXChatActor {
         var i = 0
         while i < limit, cached[i] == prompt[i] { i += 1 }
         return i
+    }
+
+    /// The most tokens a model may spend reasoning in one generation. Qwen
+    /// 3.6 sometimes reasons until the generation cap and stops with neither
+    /// text nor tool call — eleven of the thirteen failed ingestions of the
+    /// wiki evaluation (Phase 2) — and a higher cap only made that failure
+    /// slower. Past this budget the reasoning is closed for it, and the rest
+    /// of the generation, at least `answerReserve` tokens, goes to the
+    /// answer. `KAOZ_MLX_REASONING_BUDGET=<n>` lowers it in Debug builds, so
+    /// a probe can watch the cut without a model that reasons for minutes.
+    static let reasoningBudget: Int = {
+        #if DEBUG
+        if let budget = ProcessInfo.processInfo.environment["KAOZ_MLX_REASONING_BUDGET"].flatMap(Int.init) {
+            return budget
+        }
+        #endif
+        return 2_048
+    }()
+    static let answerReserve = 1_024
+
+    /// The budget, for a model that reasons between `<think>` tags; nothing
+    /// for the others, whose protocols mlx-swift-lm cannot close safely.
+    /// Qwen 3.5 and 3.6 declare no closing transition of their own: they get
+    /// the one Qwen publishes for Qwen 3, which tells the model to answer
+    /// from what it has thought so far.
+    static func thinkingBudget(
+        _ reasoning: ReasoningConfig?, tokenizer: any MLXLMCommon.Tokenizer
+    ) -> GenerationComponents {
+        guard let reasoning, reasoning.startDelimiter == "<think>" else { return .init() }
+        do {
+            let budget = try ThinkingBudgetConfiguration(
+                maximumTokenCount: reasoningBudget,
+                minimumAnswerTokenCount: answerReserve,
+                transitionOverride: reasoning.budgetTransition == nil
+                    ? QwenReasoningProtocol.qwen3.budgetTransition : nil)
+            return try GenerationComponents().applyingThinkingBudget(
+                budget, reasoning: reasoning, tokenizer: tokenizer)
+        } catch {
+            return .init()
+        }
     }
 
     /// `KAOZ_MLX_SEED=<n>` makes sampling reproducible: the same prompt draws
