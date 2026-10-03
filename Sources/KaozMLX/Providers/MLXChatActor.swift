@@ -27,9 +27,11 @@ public actor MLXChatActor {
     }
 
     /// How hard the model should think, when its chat template exposes the
-    /// knob. `.auto` sends nothing and keeps the template's own default.
+    /// knob. `.auto` sends nothing and keeps the template's own default;
+    /// `.none` turns thinking off where the template has a switch for it
+    /// (`enable_thinking`, Qwen 3.5 and 3.6).
     public enum ReasoningEffort: String, Sendable {
-        case auto, low, medium, high
+        case auto, none, low, medium, high
 
         public init(setting: String) {
             self = ReasoningEffort(rawValue: setting) ?? .auto
@@ -46,6 +48,7 @@ public actor MLXChatActor {
     /// break generation outright.
     private var templateReadsReasoningEffort = false
     private var templateUsesXHigh = false
+    private var templateReadsEnableThinking = false
     private let downloader: any Downloader
     private let tokenizerLoader: any TokenizerLoader
 
@@ -753,6 +756,7 @@ public actor MLXChatActor {
         let template = localDir.flatMap(Self.chatTemplateText(in:)) ?? ""
         templateReadsReasoningEffort = template.contains("reasoning_effort")
         templateUsesXHigh = template.contains("xhigh")
+        templateReadsEnableThinking = template.contains("enable_thinking")
 
         // Route on the catalog flag: VLM entries go through
         // VLMModelFactory (which knows about vision towers +
@@ -889,6 +893,9 @@ public actor MLXChatActor {
     private func reasoningEffortContext(
         _ effort: ReasoningEffort
     ) -> [String: any Sendable]? {
+        if effort == .none {
+            return templateReadsEnableThinking ? ["enable_thinking": false] : nil
+        }
         guard effort != .auto, templateReadsReasoningEffort else { return nil }
         let value = (effort == .high && templateUsesXHigh) ? "xhigh" : effort.rawValue
         return ["reasoning_effort": value]
