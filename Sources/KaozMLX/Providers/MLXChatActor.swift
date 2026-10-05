@@ -120,10 +120,13 @@ public actor MLXChatActor {
     /// stream — `.chunk(text)` → `.textDelta`, `.toolCall` →
     /// `.toolCall` with a UUID id (MLX's ToolCall has no id field;
     /// we synthesise one so our agent loop can route results back).
+    /// `reasoningBudget` replaces `MLXChatActor.reasoningBudget` for this
+    /// round only: a retry that should act rather than think again.
     public func chat(
         messages: [ChatMessage],
         tools: [KaozKit.ToolSpec],
-        reasoningEffort: ReasoningEffort = .auto
+        reasoningEffort: ReasoningEffort = .auto,
+        reasoningBudget: Int? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -320,7 +323,8 @@ public actor MLXChatActor {
                             input: feed.input, model: context.model, cache: box.cache,
                             state: feed.state, parameters: feedParams,
                             components: Self.thinkingBudget(
-                                context.configuration.reasoningConfig, tokenizer: context.tokenizer))
+                                context.configuration.reasoningConfig, tokenizer: context.tokenizer,
+                                budget: reasoningBudget ?? Self.reasoningBudget))
                         return generateTask(
                             promptTokenCount: feed.input.text.tokens.size,
                             modelConfiguration: context.configuration,
@@ -501,12 +505,13 @@ public actor MLXChatActor {
     /// the one Qwen publishes for Qwen 3, which tells the model to answer
     /// from what it has thought so far.
     static func thinkingBudget(
-        _ reasoning: ReasoningConfig?, tokenizer: any MLXLMCommon.Tokenizer
+        _ reasoning: ReasoningConfig?, tokenizer: any MLXLMCommon.Tokenizer,
+        budget: Int = reasoningBudget
     ) -> GenerationComponents {
         guard let reasoning, reasoning.startDelimiter == "<think>" else { return .init() }
         do {
             let budget = try ThinkingBudgetConfiguration(
-                maximumTokenCount: reasoningBudget,
+                maximumTokenCount: budget,
                 minimumAnswerTokenCount: answerReserve,
                 transitionOverride: reasoning.budgetTransition == nil
                     ? QwenReasoningProtocol.qwen3.budgetTransition : nil)

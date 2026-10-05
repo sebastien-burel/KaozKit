@@ -10,13 +10,18 @@ public struct MLXLLMProvider: LLMProvider {
     public let displayName: String = "On this Mac"
     public let modelID: String
     public let reasoningEffort: MLXChatActor.ReasoningEffort
+    /// The most tokens a reply may spend reasoning; nil keeps
+    /// `MLXChatActor.reasoningBudget`.
+    public let reasoningBudget: Int?
 
     public init(
         modelID: String,
-        reasoningEffort: MLXChatActor.ReasoningEffort = .auto
+        reasoningEffort: MLXChatActor.ReasoningEffort = .auto,
+        reasoningBudget: Int? = nil
     ) {
         self.modelID = modelID
         self.reasoningEffort = reasoningEffort
+        self.reasoningBudget = reasoningBudget
     }
 
     public func availability() async -> ProviderAvailability {
@@ -43,7 +48,8 @@ public struct MLXLLMProvider: LLMProvider {
                 let actor = await MLXChatActor.shared(for: modelID)
                 do {
                     for try await event in await actor.chat(
-                        messages: messages, tools: tools, reasoningEffort: reasoningEffort
+                        messages: messages, tools: tools, reasoningEffort: reasoningEffort,
+                        reasoningBudget: reasoningBudget
                     ) {
                         if Task.isCancelled { break }
                         continuation.yield(event)
