@@ -77,6 +77,29 @@ public struct OpenAICompatibleModelsResponse: Decodable {
         /// The vector lengths an embedding model can return, when the
         /// server says so.
         public let dimensions: Dimensions?
+        /// What the model costs in credits, when the server says so
+        /// (TyKaoz Cloud does). Never an amount of money.
+        public let pricing: Pricing?
+    }
+
+    /// A model's price in credits per million tokens, and its band:
+    /// `econome`, `standard` or `premium`.
+    public struct Pricing: Codable, Hashable, Sendable {
+        public let label: String
+        public let inputCreditsPerMillion: Double
+        public let outputCreditsPerMillion: Double
+
+        public init(label: String, inputCreditsPerMillion: Double, outputCreditsPerMillion: Double) {
+            self.label = label
+            self.inputCreditsPerMillion = inputCreditsPerMillion
+            self.outputCreditsPerMillion = outputCreditsPerMillion
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case label
+            case inputCreditsPerMillion = "input_credits_per_m"
+            case outputCreditsPerMillion = "output_credits_per_m"
+        }
     }
 
     /// The lengths an embedding model returns, and the one it defaults to.
