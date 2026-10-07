@@ -51,13 +51,28 @@ public struct TyKaozCloudProvider: LLMProvider {
 
     /// How much of the month's allowance a key has spent. The endpoint
     /// gives a ratio, never an amount: what the subscription covers is its
-    /// business. `ratio` is nil for a key without a budget.
+    /// business. `ratio` is nil for a key without a budget. A key of a
+    /// subscription also gets its `credits`.
     public struct Usage: Decodable, Sendable, Equatable {
         public let period: String
         public let ratio: Double?
         public let resetsAt: Date
+        public let credits: Credits?
 
-        enum CodingKeys: String, CodingKey { case period, ratio, resetsAt = "resets_at" }
+        enum CodingKeys: String, CodingKey { case period, ratio, credits, resetsAt = "resets_at" }
+    }
+
+    /// What a subscription has left, in credits: of the month (`cycle`,
+    /// below zero when the month overspent) and of the top-ups, out of what
+    /// a month grants; and when the month renews.
+    public struct Credits: Decodable, Sendable, Equatable {
+        public let remaining: Double
+        public let cycle: Double
+        public let topup: Double
+        public let month: Double?
+        public let renewsAt: Date?
+
+        enum CodingKeys: String, CodingKey { case remaining, cycle, topup, month, renewsAt = "renews_at" }
     }
 
     public static func usage(apiKey: String, session: URLSession = .shared) async throws -> Usage {
