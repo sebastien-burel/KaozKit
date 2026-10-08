@@ -35,15 +35,20 @@ public struct OpenAICompatibleClient: Sendable {
     /// documents its own auth field (Xiaomi MiMo asks for `api-key`) while
     /// still accepting the standard one — send both rather than guess.
     public let extraHeaders: [String: String]
+    /// How a past turn's reasoning goes back: in `reasoning_content`, which
+    /// DeepSeek and GLM expect after a tool call, or — for Mistral, which
+    /// refuses that field — as a `thinking` block of the content.
+    public let reasoningAsBlocks: Bool
 
     public init(
         baseURL: URL, apiKey: String, session: URLSession = .shared,
-        extraHeaders: [String: String] = [:]
+        extraHeaders: [String: String] = [:], reasoningAsBlocks: Bool = false
     ) {
         self.baseURL = baseURL
         self.apiKey = apiKey
         self.session = session
         self.extraHeaders = extraHeaders
+        self.reasoningAsBlocks = reasoningAsBlocks
     }
 
     // MARK: - Embeddings
@@ -233,7 +238,8 @@ public struct OpenAICompatibleClient: Sendable {
                     }
                     request.timeoutInterval = 60
                     request.httpBody = try Self.buildBody(
-                        model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort)
+                        model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort,
+                        reasoningAsBlocks: reasoningAsBlocks)
 
                     // Client-side timing for the benchmark metrics. The
                     // server reports token counts but no durations, so we
@@ -755,7 +761,8 @@ public struct OpenAICompatibleClient: Sendable {
         model: String,
         messages: [ChatMessage],
         tools: [ToolSpec],
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil,
+        reasoningAsBlocks: Bool = false
     ) throws -> Data {
         var dict: [String: Any] = [
             "model": model,
@@ -764,7 +771,7 @@ public struct OpenAICompatibleClient: Sendable {
             // we can report prompt/completion counts. Standard OpenAI option,
             // honoured by vLLM, NIM, LM Studio, llama.cpp and the cloud hosts.
             "stream_options": ["include_usage": true],
-            "messages": try messagesToDicts(messages)
+            "messages": try messagesToDicts(messages, reasoningAsBlocks: reasoningAsBlocks)
         ]
         if let reasoningEffort {
             dict["reasoning_effort"] = reasoningEffort
@@ -791,7 +798,7 @@ public struct OpenAICompatibleClient: Sendable {
     /// shape. Consecutive `.assistant` + `.toolCall` entries merge into a
     /// single assistant message with a `tool_calls` array; `.toolResult`
     /// entries become role="tool" messages with `tool_call_id`.
-    static func messagesToDicts(_ messages: [ChatMessage]) throws -> [[String: Any]] {
+    static func messagesToDicts(_ messages: [ChatMessage], reasoningAsBlocks: Bool = false) throws -> [[String: Any]] {
         var out: [[String: Any]] = []
         var i = 0
         while i < messages.count {
@@ -820,7 +827,16 @@ public struct OpenAICompatibleClient: Sendable {
                     "content": msg.content
                 ]
                 if let reasoning = msg.reasoningContent, !reasoning.isEmpty {
-                    dict["reasoning_content"] = reasoning
+                    if reasoningAsBlocks {
+                        var blocks: [[String: Any]] = [[
+                            "type": "thinking",
+                            "thinking": [["type": "text", "text": reasoning]]
+                        ]]
+                        if !msg.content.isEmpty { blocks.append(["type": "text", "text": msg.content]) }
+                        dict["content"] = blocks
+                    } else {
+                        dict["reasoning_content"] = reasoning
+                    }
                 }
                 var calls: [[String: Any]] = []
                 var j = i + 1

@@ -14,7 +14,8 @@ public struct MistralProvider: LLMProvider {
     public init(apiKey: String, model: String, session: URLSession = .shared) {
         self.apiKey = apiKey
         self.model = model
-        self.client = OpenAICompatibleClient(baseURL: Self.baseURL, apiKey: apiKey, session: session)
+        self.client = OpenAICompatibleClient(
+            baseURL: Self.baseURL, apiKey: apiKey, session: session, reasoningAsBlocks: true)
     }
 
     public func availability() async -> ProviderAvailability {
