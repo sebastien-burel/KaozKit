@@ -106,6 +106,13 @@ public struct OpenAICompatibleModelsResponse: Decodable {
         /// What the model costs in credits, when the server says so
         /// (TyKaoz Cloud does). Never an amount of money.
         public let pricing: Pricing?
+        /// What the model can do, when the server says so (Mistral does).
+        public let capabilities: Capabilities?
+    }
+
+    /// Mistral's model capabilities; only whether the model reasons is read.
+    public struct Capabilities: Decodable, Hashable, Sendable {
+        public let reasoning: Bool?
     }
 
     /// A model's price in credits per million tokens, and its band:

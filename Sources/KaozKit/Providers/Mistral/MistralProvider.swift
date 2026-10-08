@@ -6,14 +6,18 @@ public struct MistralProvider: LLMProvider {
 
     public let apiKey: String
     public let model: String
+    /// `reasoning_effort` for a model that reasons; nil leaves the model's
+    /// default, which thinks.
+    public let reasoningEffort: String?
 
     private let client: OpenAICompatibleClient
 
     public static let baseURL = URL(string: "https://api.mistral.ai/v1")!
 
-    public init(apiKey: String, model: String, session: URLSession = .shared) {
+    public init(apiKey: String, model: String, reasoningEffort: String? = nil, session: URLSession = .shared) {
         self.apiKey = apiKey
         self.model = model
+        self.reasoningEffort = reasoningEffort
         self.client = OpenAICompatibleClient(
             baseURL: Self.baseURL, apiKey: apiKey, session: session, reasoningAsBlocks: true)
     }
@@ -36,6 +40,17 @@ public struct MistralProvider: LLMProvider {
     }
 
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
-        client.chat(model: model, messages: messages, tools: tools)
+        client.chat(model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort)
+    }
+
+    /// The efforts a Mistral model accepts, for one its `/v1/models` marks as
+    /// reasoning: GLM 5.3 takes `low`, `high` or `max`; Mistral's own models
+    /// only `none` or `high` (docs.mistral.ai, Reasoning). Their default thinks.
+    public static func reasoning(for model: OpenAICompatibleModelsResponse.Model)
+        -> OpenAICompatibleModelsResponse.Reasoning? {
+        guard model.capabilities?.reasoning == true else { return nil }
+        return model.id.lowercased().contains("glm")
+            ? .init(values: ["low", "high", "max"], defaultValue: "high")
+            : .init(values: ["none", "high"], defaultValue: "high")
     }
 }
