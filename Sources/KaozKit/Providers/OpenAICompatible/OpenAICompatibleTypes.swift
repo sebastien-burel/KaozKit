@@ -16,6 +16,32 @@ public struct OpenAICompatibleChunk: Decodable {
                 case toolCalls = "tool_calls"
                 case reasoningContent = "reasoning_content"
             }
+
+            /// `content` is a string, or — for Mistral's reasoning models — a
+            /// list of blocks: `text` blocks are the answer, `thinking` blocks
+            /// (themselves holding text blocks) the reasoning.
+            public init(from decoder: Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                toolCalls = try c.decodeIfPresent([ToolCallDelta].self, forKey: .toolCalls)
+                var reasoning = try c.decodeIfPresent(String.self, forKey: .reasoningContent)
+                if let text = try? c.decodeIfPresent(String.self, forKey: .content) {
+                    content = text
+                } else if let blocks = try? c.decodeIfPresent([ContentBlock].self, forKey: .content) {
+                    let text = blocks.compactMap(\.text).joined()
+                    let thinking = blocks.flatMap { $0.thinking ?? [] }.compactMap(\.text).joined()
+                    content = text.isEmpty ? nil : text
+                    if !thinking.isEmpty { reasoning = (reasoning ?? "") + thinking }
+                } else {
+                    content = nil
+                }
+                reasoningContent = reasoning
+            }
+        }
+
+        struct ContentBlock: Decodable {
+            let type: String?
+            let text: String?
+            let thinking: [ContentBlock]?
         }
 
         public struct ToolCallDelta: Decodable {
