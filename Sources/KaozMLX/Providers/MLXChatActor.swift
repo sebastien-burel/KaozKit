@@ -183,9 +183,10 @@ public actor MLXChatActor {
                     let isGemma4 = modelID.localizedCaseInsensitiveContains("gemma-4")
                         || modelID.localizedCaseInsensitiveContains("gemma4")
                     // Templates that show a tool result only after a structured
-                    // call: Gemma 4's, and the Onyx models' (Muse Glimmer).
-                    let structuredToolHistory = isGemma4
-                        ? true : (await container.configuration.toolCallFormat) == .atem
+                    // call: Gemma 4's, the Onyx models' (Muse Glimmer), and
+                    // Mistral's ([TOOL_CALLS]…[ARGS], then [TOOL_RESULTS]).
+                    let format = await container.configuration.toolCallFormat
+                    let structuredToolHistory = isGemma4 || format == .atem || format == .mistral
                     let mappedTools = tools.isEmpty ? nil : tools.compactMap(Self.mapTool)
                     let context = reasoningEffortContext(reasoningEffort)
                     let userInput: UserInput
