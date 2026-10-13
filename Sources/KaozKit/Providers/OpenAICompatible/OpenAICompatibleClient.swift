@@ -312,6 +312,9 @@ public struct OpenAICompatibleClient: Sendable {
                             lastToken = clock.now
                             continuation.yield(.reasoningDelta(reasoning))
                         }
+                        if let sources = info.sources, !sources.isEmpty {
+                            continuation.yield(.sources(sources))
+                        }
                         for tcDelta in info.toolCallDeltas {
                             let index = tcDelta.index ?? 0
                             if var acc = accumulators[index] {
@@ -394,6 +397,8 @@ public struct OpenAICompatibleClient: Sendable {
         let done: Bool
         /// Token counts if this chunk carried a `usage` block, else nil.
         let usage: Usage?
+        /// A TyKaoz server's sources, if this chunk carried them.
+        var sources: [SourceReference]? = nil
 
         struct Usage: Equatable {
             let promptTokens: Int?
@@ -447,8 +452,11 @@ public struct OpenAICompatibleClient: Sendable {
                 LineInfo.Usage(promptTokens: $0.promptTokens, completionTokens: $0.completionTokens)
             }
             guard let choice = (chunk.choices ?? []).first else {
-                // Trailing usage-only chunk: no choices, just token counts.
-                return LineInfo(textDelta: nil, toolCallDeltas: [], reasoningDelta: nil, done: false, usage: usage)
+                // Trailing usage-only chunk: no choices, just token counts —
+                // or a TyKaoz server's sources.
+                var info = LineInfo(textDelta: nil, toolCallDeltas: [], reasoningDelta: nil, done: false, usage: usage)
+                info.sources = chunk.tykaozSources
+                return info
             }
 
             let delta = choice.delta

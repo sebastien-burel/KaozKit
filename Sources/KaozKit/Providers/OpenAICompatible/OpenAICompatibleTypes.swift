@@ -89,6 +89,14 @@ public struct OpenAICompatibleChunk: Decodable {
     /// rather than throwing.
     public let choices: [Choice]?
     public let usage: Usage?
+    /// A TyKaoz server's sources for the answer, in a chunk of their own
+    /// before `[DONE]`. No other server sends it.
+    public let tykaozSources: [SourceReference]?
+
+    enum CodingKeys: String, CodingKey {
+        case choices, usage
+        case tykaozSources = "tykaoz_sources"
+    }
 }
 
 public struct OpenAICompatibleModelsResponse: Decodable {

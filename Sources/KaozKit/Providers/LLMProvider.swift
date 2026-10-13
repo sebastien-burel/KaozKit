@@ -53,6 +53,22 @@ public enum StreamEvent: Sendable, Hashable {
     /// small machine, minutes that would otherwise read as a hung app. Any
     /// other event means the reading is over.
     case prefill(processed: Int, total: Int)
+    /// What an answer rests on, as a TyKaoz server names it: the wiki pages
+    /// it read there, and the document each was written from. The pages
+    /// stay on the server; the client can only show their names.
+    case sources([SourceReference])
+}
+
+/// A wiki page an answer rests on, by name, and the document it was written
+/// from when there is one.
+public struct SourceReference: Sendable, Hashable, Codable {
+    public let title: String
+    public let source: String?
+
+    public init(title: String, source: String?) {
+        self.title = title
+        self.source = source
+    }
 }
 
 /// Performance metrics for one assistant turn. Every field is optional —
