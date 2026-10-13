@@ -64,10 +64,18 @@ public enum StreamEvent: Sendable, Hashable {
 public struct SourceReference: Sendable, Hashable, Codable {
     public let title: String
     public let source: String?
+    /// The page's id on the server, for asking it for the page.
+    public let pageID: String?
 
-    public init(title: String, source: String?) {
+    public init(title: String, source: String?, pageID: String? = nil) {
         self.title = title
         self.source = source
+        self.pageID = pageID
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case title, source
+        case pageID = "page_id"
     }
 }
 
