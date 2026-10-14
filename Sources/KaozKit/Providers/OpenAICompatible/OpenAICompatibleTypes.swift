@@ -116,6 +116,21 @@ public struct OpenAICompatibleModelsResponse: Decodable {
         public let pricing: Pricing?
         /// What the model can do, when the server says so (Mistral does).
         public let capabilities: Capabilities?
+
+        enum CodingKeys: String, CodingKey { case id, reasoning, kind, dimensions, pricing, capabilities }
+
+        /// Only `id` is required. The rest is what some servers add, under
+        /// names others may use for something else: a field that does not
+        /// read as expected is dropped, not the model — and not the list.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            reasoning = try? c.decodeIfPresent(Reasoning.self, forKey: .reasoning)
+            kind = try? c.decodeIfPresent(String.self, forKey: .kind)
+            dimensions = try? c.decodeIfPresent(Dimensions.self, forKey: .dimensions)
+            pricing = try? c.decodeIfPresent(Pricing.self, forKey: .pricing)
+            capabilities = try? c.decodeIfPresent(Capabilities.self, forKey: .capabilities)
+        }
     }
 
     /// Mistral's model capabilities; only whether the model reasons is read.
