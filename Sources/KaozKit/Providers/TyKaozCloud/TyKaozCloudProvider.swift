@@ -55,11 +55,25 @@ public struct TyKaozCloudProvider: LLMProvider {
     /// subscription also gets its `credits`.
     public struct Usage: Decodable, Sendable, Equatable {
         public let period: String
+        /// Deprecated by `usagePercent`, with `credits`.
         public let ratio: Double?
         public let resetsAt: Date
         public let credits: Credits?
+        /// The share of the plan used this month, a whole percent from 0 to
+        /// 100, for all regions together — computed by the service, which
+        /// alone knows the plan. Nil from a service not yet updated.
+        public let usagePercent: Int?
+        /// "<1" for a use too small to show as a percent, nil otherwise.
+        public let usageDisplay: String?
+        /// When the month renews.
+        public let renewsAt: Date?
+        /// The plan's name, « Plus » or « Pro ».
+        public let planName: String?
 
-        enum CodingKeys: String, CodingKey { case period, ratio, credits, resetsAt = "resets_at" }
+        enum CodingKeys: String, CodingKey {
+            case period, ratio, credits, resetsAt = "resets_at", usagePercent = "usage_percent",
+                 usageDisplay = "usage_display", renewsAt = "renews_at", planName = "plan_name"
+        }
     }
 
     /// What a subscription has left, in credits: of the month (`cycle`,

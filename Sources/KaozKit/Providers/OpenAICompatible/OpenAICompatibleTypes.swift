@@ -112,12 +112,17 @@ public struct OpenAICompatibleModelsResponse: Decodable {
         /// server says so.
         public let dimensions: Dimensions?
         /// What the model costs in credits, when the server says so
-        /// (TyKaoz Cloud does). Never an amount of money.
+        /// (TyKaoz Cloud does). Never an amount of money. Deprecated by
+        /// `tier`: an app shows no unit of consumption.
         public let pricing: Pricing?
+        /// How fast a chat model uses a plan, when the server says so
+        /// (TyKaoz Cloud does): 1 light, 2 standard, 3 intensive; nil for an
+        /// embedding model. The server sets the thresholds.
+        public let tier: Int?
         /// What the model can do, when the server says so (Mistral does).
         public let capabilities: Capabilities?
 
-        enum CodingKeys: String, CodingKey { case id, reasoning, kind, dimensions, pricing, capabilities }
+        enum CodingKeys: String, CodingKey { case id, reasoning, kind, dimensions, pricing, tier, capabilities }
 
         /// Only `id` is required. The rest is what some servers add, under
         /// names others may use for something else: a field that does not
@@ -129,6 +134,7 @@ public struct OpenAICompatibleModelsResponse: Decodable {
             kind = try? c.decodeIfPresent(String.self, forKey: .kind)
             dimensions = try? c.decodeIfPresent(Dimensions.self, forKey: .dimensions)
             pricing = try? c.decodeIfPresent(Pricing.self, forKey: .pricing)
+            tier = try? c.decodeIfPresent(Int.self, forKey: .tier)
             capabilities = try? c.decodeIfPresent(Capabilities.self, forKey: .capabilities)
         }
     }
