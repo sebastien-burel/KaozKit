@@ -69,11 +69,25 @@ public struct TyKaozCloudProvider: LLMProvider {
         public let renewsAt: Date?
         /// The plan's name, « Plus » or « Pro ».
         public let planName: String?
+        /// Each top-up on sale, its size as a share of the plan's month.
+        public let topups: [Topup]?
+        /// The top-ups' balance, in share of a month, not capped at 100.
+        public let topupReservePercent: Int?
+        /// "<1" for a reserve too small to show as a percent, nil otherwise.
+        public let topupReserveDisplay: String?
 
         enum CodingKeys: String, CodingKey {
-            case period, ratio, credits, resetsAt = "resets_at", usagePercent = "usage_percent",
-                 usageDisplay = "usage_display", renewsAt = "renews_at", planName = "plan_name"
+            case period, ratio, credits, topups, resetsAt = "resets_at", usagePercent = "usage_percent",
+                 usageDisplay = "usage_display", renewsAt = "renews_at", planName = "plan_name",
+                 topupReservePercent = "topup_reserve_percent", topupReserveDisplay = "topup_reserve_display"
         }
+    }
+
+    /// A top-up the service sells: its offer, as the licence service names
+    /// it, and what it adds, as a percent of the plan's month.
+    public struct Topup: Decodable, Sendable, Equatable {
+        public let offer: String
+        public let percent: Int
     }
 
     /// What a subscription has left, in credits: of the month (`cycle`,
