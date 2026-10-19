@@ -16,6 +16,9 @@ public struct HTTPPluginTool: Tool {
 
     private static let maxResponseChars = 100_000
 
+    /// The server it calls, for the app to say where the arguments go.
+    public var host: String? { definition.host }
+
     public var spec: ToolSpec {
         ToolSpec(
             name: definition.name,
