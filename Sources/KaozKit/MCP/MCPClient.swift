@@ -112,7 +112,12 @@ public actor MCPClient {
 
     // MARK: - Tools
 
-    /// Every tool the server offers, following the pages it cuts the list in.
+    /// Bounds on what a server may put before the model on every turn.
+    public static let maxTools = 200
+    public static let maxDescription = 8_000
+
+    /// Every tool the server offers, following the pages it cuts the list in,
+    /// within `maxTools`, descriptions cut at `maxDescription`.
     public func listTools() async throws -> [MCPToolDefinition] {
         var tools: [MCPToolDefinition] = []
         var cursor: String?
@@ -121,15 +126,18 @@ public actor MCPClient {
             for case let tool as [String: Any] in result["tools"] as? [Any] ?? [] {
                 guard let name = tool["name"] as? String else { continue }
                 let annotations = tool["annotations"] as? [String: Any]
+                guard tools.count < Self.maxTools else { break }
+                let description = tool["description"] as? String ?? ""
                 tools.append(MCPToolDefinition(
                     name: name, title: tool["title"] as? String ?? annotations?["title"] as? String,
-                    description: tool["description"] as? String ?? "",
+                    description: description.count > Self.maxDescription
+                        ? String(description.prefix(Self.maxDescription)) + "…" : description,
                     inputSchemaJSON: MCPWire.json(tool["inputSchema"] ?? ["type": "object"]),
                     readOnly: annotations?["readOnlyHint"] as? Bool,
                     destructive: annotations?["destructiveHint"] as? Bool))
             }
             cursor = result["nextCursor"] as? String
-            if cursor?.isEmpty ?? true { break }
+            if cursor?.isEmpty ?? true || tools.count >= Self.maxTools { break }
         }
         return tools
     }
@@ -174,10 +182,14 @@ public actor MCPClient {
         let era = try await connect()
         do {
             return try await send(method, params: params, name: name, era: era)
-        } catch MCPError.http(status: 404, _) where era != .stateless {
+        } catch MCPError.http(status: 404, let body) where era != .stateless {
             // The server speaks the same era: a new handshake, not a new discovery.
             let renewed = try await handshake()
             self.era = renewed
+            // A call is not sent twice: the server may have run it before it
+            // lost the session, and a write must not happen twice for one
+            // approval. The next call goes on the new session.
+            if method == "tools/call" { throw MCPError.http(status: 404, body: body) }
             return try await send(method, params: params, name: name, era: renewed)
         }
     }
