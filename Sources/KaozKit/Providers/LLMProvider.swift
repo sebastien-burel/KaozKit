@@ -57,6 +57,12 @@ public enum StreamEvent: Sendable, Hashable {
     /// it read there, and the document each was written from. The pages
     /// stay on the server; the client can only show their names.
     case sources([SourceReference])
+    /// A TyKaoz server waits for the user before one of its connectors runs a
+    /// call: the card to show, the server's own words. `id` is the server's
+    /// name for the wait, to answer it by; `reason` is the server's code
+    /// (`writes`, `exposed_data`, …). The stream resumes once answered.
+    case approvalRequest(id: String, label: String, remoteName: String, host: String, arguments: String,
+                         reason: String)
 }
 
 /// A wiki page an answer rests on, by name, and the document it was written

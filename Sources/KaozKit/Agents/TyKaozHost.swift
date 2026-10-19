@@ -198,7 +198,7 @@ public nonisolated final class TyKaozHost {
                         case .metrics(let m):
                             self.addUsage(prompt: m.promptTokens ?? 0,
                                           completion: m.completionTokens ?? 0)
-                        case .imageOutput, .loadingModel, .prefill, .sources:
+                        case .imageOutput, .loadingModel, .prefill, .sources, .approvalRequest:
                             break
                         }
                     }
