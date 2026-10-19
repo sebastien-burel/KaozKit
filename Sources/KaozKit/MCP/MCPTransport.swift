@@ -83,12 +83,20 @@ public struct StreamableHTTPTransport: MCPTransport {
         let (bytes, response) = try await session.bytes(for: http, delegate: RefuseRedirects())
         guard let response = response as? HTTPURLResponse else { throw MCPError.malformed("pas une réponse HTTP") }
         let started = ContinuousClock.now
+        let stream = (response.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased().contains("text/event-stream")
+        let id = MCPWire.object(request.body)?["id"] as? Int
         var data = Data()
         for try await byte in bytes {
             data.append(byte)
             if data.count > maxBytes { throw MCPError.malformed("réponse trop longue") }
             if data.count % 4096 == 0, ContinuousClock.now - started > maxDuration {
                 throw MCPError.malformed("réponse trop lente")
+            }
+            // A server may keep the stream open after answering: once the
+            // answer to this request has come, the rest is not waited for.
+            if stream, let id, byte == 0x0A, data.count > 1, data[data.count - 2] == 0x0A || data.suffix(4) == Data("\r\n\r\n".utf8),
+               (try? MCPWire.reply(to: id, body: data, contentType: "text/event-stream"))?["id"] as? Int == id {
+                break
             }
         }
         let headers = response.allHeaderFields.reduce(into: [String: String]()) { all, field in
