@@ -16,13 +16,15 @@ public struct AnthropicProvider: LLMProvider {
 
     private let client: AnthropicClient
 
+    /// `baseURL`: another server speaking Anthropic's API (DeepSeek, Kimi,
+    /// z.ai…), its `/v1` included.
     public init(apiKey: String, model: String, maxTokens: Int? = nil, effort: String? = nil,
-                session: URLSession = .shared) {
+                baseURL: URL = URL(string: "https://api.anthropic.com/v1")!, session: URLSession = .shared) {
         self.apiKey = apiKey
         self.model = model
         self.maxTokens = maxTokens
         self.effort = effort
-        self.client = AnthropicClient(apiKey: apiKey, session: session)
+        self.client = AnthropicClient(apiKey: apiKey, baseURL: baseURL, session: session)
     }
 
     public func availability() async -> ProviderAvailability {
