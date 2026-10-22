@@ -69,7 +69,9 @@ public struct AnthropicClient: Sendable {
             throw AnthropicClientError.network(message: "non-HTTP response")
         }
         guard (200..<300).contains(http.statusCode) else {
-            throw AnthropicClientError.http(status: http.statusCode)
+            // Anthropic says why in the body — a balance too low, a key refused.
+            let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            throw AnthropicClientError.http(status: http.statusCode, body: body?.isEmpty == false ? body : nil)
         }
         do {
             return try JSONDecoder().decode(AnthropicModelsResponse.self, from: data).data
