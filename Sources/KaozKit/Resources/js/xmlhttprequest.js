@@ -15,6 +15,8 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
     this._readIndex = 0;
     this._headers = {};
     this._responseHeaders = {};
+    // A redirect to another site is not followed: the 3xx comes back as is.
+    this.sameSiteRedirectsOnly = false;
     this.onprogress = null;
     this.onload = null;
     this.onerror = null;
@@ -58,6 +60,7 @@ globalThis.XMLHttpRequest = class XMLHttpRequest {
       url: this._url,
       headers: this._headers,
       body: body == null ? null : String(body),
+      sameSiteRedirectsOnly: this.sameSiteRedirectsOnly === true,
     };
     __http(req, (chunk) => {
       this._chunks.push(chunk);

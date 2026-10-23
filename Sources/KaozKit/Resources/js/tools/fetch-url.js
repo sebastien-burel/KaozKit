@@ -44,10 +44,16 @@ export default {
     const url = String((args && args.url) || "");
     if (!/^https?:\/\//i.test(url)) throw new Error("url must be http(s)");
 
+    // Another site is the host app's to judge, as any fetch it asks about:
+    // a redirect there is handed back, never followed behind its back.
     const res = await httpGet(url, {
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "User-Agent": "TyKaoz/0.1 (macOS; +https://tykaoz.bzh)",
-    });
+    }, { sameSite: true });
+    if (res.status >= 300 && res.status < 400 && res.location) {
+      throw new Error("Redirected to another site: " + res.location
+        + " — call fetch_url with that address if it is the page you need.");
+    }
     if (res.status < 200 || res.status >= 300) throw new Error("HTTP " + res.status);
 
     const text = res.contentType.includes("html") ? stripHTML(res.text) : res.text;

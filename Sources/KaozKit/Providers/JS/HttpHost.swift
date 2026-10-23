@@ -45,9 +45,11 @@ enum HttpHost {
             request.httpBody = Data(body.utf8)
         }
 
+        let guardRedirects = obj["sameSiteRedirectsOnly"] as? Bool == true ? SameSiteRedirects() : nil
+
         Task {
             do {
-                let (bytes, response) = try await session.bytes(for: request)
+                let (bytes, response) = try await session.bytes(for: request, delegate: guardRedirects)
                 // Stream the body line by line (SSE is line-oriented; a plain
                 // JSON body simply arrives as one or a few lines). Re-add the
                 // stripped newline so the JS side can reassemble verbatim.
@@ -106,4 +108,20 @@ public func xsbHttpSend(_ bridge: UnsafeMutableRawPointer?, _ id: UInt32,
                 _ requestJSON: UnsafePointer<CChar>?) {
     guard let bridge, let cstr = requestJSON else { return }
     HttpHost.send(bridge: bridge, id: id, requestJSON: String(cString: cstr))
+}
+
+/// Follows a redirect only within the site asked for: one to another site
+/// leaves the 3xx as the response, for the caller to judge the new address
+/// as it judged the first.
+final class SameSiteRedirects: NSObject, URLSessionTaskDelegate, Sendable {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        Self.site(of: task.originalRequest?.url) == Self.site(of: request.url) ? request : nil
+    }
+
+    /// A host in lower case, without « www. ».
+    static func site(of url: URL?) -> String? {
+        guard let host = url?.host()?.lowercased() else { return nil }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
 }
