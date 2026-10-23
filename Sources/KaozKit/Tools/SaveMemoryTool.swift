@@ -19,7 +19,7 @@ public struct SaveMemoryTool: Tool {
         Pins a small, stable fact about the user themself so it's always in
         context: their first name, preferred language, tone, how they like
         answers. NOT for the people around them (family, colleagues), a
-        project or a topic — that goes in the wiki via write_wiki_page. Not
+        project or a topic — that goes in the memory's pages via write_page. Not
         for one-off chatter. Never pin a value that changes with time — an
         age, a time elapsed, "three weeks old": pin what it derives from (a
         birth date, a start date). Saving under a title already pinned
@@ -86,7 +86,7 @@ public struct SaveMemoryTool: Tool {
         if redirectsPeopleToWiki, Memory.isAboutSomeoneElse(title: resolvedTitle, content: content) {
             throw ToolError.invalidArguments(reason: """
                 not saved: "\(content)" is about someone other than the user. \
-                Write it on that person's page with write_wiki_page (create \
+                Write it on that person's page with write_page (create \
                 the page if it does not exist) instead of pinning it.
                 """)
         }
