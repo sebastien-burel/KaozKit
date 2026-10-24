@@ -36,8 +36,17 @@ public struct PluginToolDef: Equatable, Sendable {
     /// The server the tool calls, for the user to see where their arguments
     /// go. Nil when the host itself is a placeholder.
     public var host: String? {
-        guard let match = urlTemplate.firstMatch(of: /^[a-zA-Z]+:\/\/([^\/:?#{*]+)/) else { return nil }
-        return String(match.output.1).lowercased()
+        // The host follows the last `@` of the authority: what comes before
+        // is a user and password, and `api.open-meteo.com:x@other.example`
+        // goes to `other.example`. An argument anywhere in the authority
+        // could move it.
+        guard let match = urlTemplate.firstMatch(of: /^[a-zA-Z]+:\/\/([^\/?#]+)/),
+              !match.output.1.contains("{"),
+              let host = match.output.1.split(separator: "@", omittingEmptySubsequences: false).last?
+                  .prefix(while: { $0 != ":" }),
+              !host.isEmpty, !host.contains("*")
+        else { return nil }
+        return host.lowercased()
     }
 
     /// Secret placeholder names (`***NAME***`) referenced in this tool's URL
