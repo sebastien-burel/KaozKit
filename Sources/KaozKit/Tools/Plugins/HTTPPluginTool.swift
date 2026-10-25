@@ -19,6 +19,10 @@ public struct HTTPPluginTool: Tool {
     /// The server it calls, for the app to say where the arguments go.
     public var host: String? { definition.host }
 
+    /// Whether it calls with the user's secrets: its answers may then be
+    /// the user's own data, from their account.
+    public var usesSecrets: Bool { !definition.secretNames.isEmpty }
+
     public var spec: ToolSpec {
         ToolSpec(
             name: definition.name,
