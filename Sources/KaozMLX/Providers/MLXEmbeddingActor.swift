@@ -113,9 +113,9 @@ public actor MLXEmbeddingActor {
             // bge-m3).
             let inputs = texts.map { tokenizer.encode(text: $0, addSpecialTokens: true) }
 
-            // Pad to the longest input. Use the eos id (or 0 as
-            // fallback) so the attention mask we derive from
-            // `!= padId` lights up the right positions.
+            // Pad to the longest input, and mask by each input's own
+            // length: a mask read back from the pad token would also hide
+            // the real end-of-sentence token when both are the same id.
             let padId = tokenizer.eosTokenId ?? 0
             let maxLen = max(inputs.map(\.count).max() ?? 0, 1)
             let padded = stacked(
@@ -123,19 +123,22 @@ public actor MLXEmbeddingActor {
                     MLXArray(tokens + Array(repeating: padId, count: maxLen - tokens.count))
                 }
             )
-
-            let mask = (padded .!= padId)
+            let mask = stacked(inputs.map { tokens in MLXArray((0..<maxLen).map { $0 < tokens.count }) })
             let tokenTypes = MLXArray.zeros(like: padded)
 
-            // BERT/RoBERTa-style forward + mean/CLS pooling (decided
-            // by the model config baked into `pooling`). Normalising
-            // here means the indexer can use plain dot-product as
-            // cosine similarity downstream.
-            let result = pooling(
-                model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask),
-                normalize: true,
-                applyLayerNorm: true
-            )
+            let output = model(padded, positionIds: nil, tokenTypeIds: tokenTypes, attentionMask: mask)
+            let result: MLXArray
+            switch pooling.strategy {
+            case .cls, .first, .none:
+                // The first token's hidden state, as sentence-transformers
+                // reads it. `Pooling` would prefer `pooledOutput`, a dense
+                // layer bge-m3 was never trained through: recall@5 fell from
+                // 78 to 44 % (eval/wiki/reports/EMBEDDING.md).
+                let first = output.hiddenStates![0..., 0, 0...]
+                result = first / MLX.sqrt(MLX.sum(first * first, axis: -1, keepDims: true))
+            case .mean, .max, .last:
+                result = pooling(output, mask: mask, normalize: true)
+            }
             result.eval()
             return result.map { $0.asArray(Float.self) }
         }
