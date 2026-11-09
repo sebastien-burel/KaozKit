@@ -3,15 +3,63 @@ import Foundation
 /// Bridges a plugin's tool definition to the `Tool` protocol. When invoked it
 /// calls the configured HTTP endpoint — POST sends the arguments as the JSON
 /// body, GET maps them to query items — and returns the response body as text.
+///
+/// A plugin may hold several accounts — the same secrets, another value for
+/// each. With two or more, the model names the account in an extra
+/// argument, removed before the request.
 public struct HTTPPluginTool: Tool {
+    /// One set of values for the plugin's secrets, under a label the model
+    /// picks it by.
+    public struct Account: Sendable, Equatable {
+        public let id: String
+        public let label: String
+        public let secrets: [String: String]
+
+        public init(id: String, label: String, secrets: [String: String]) {
+            self.id = id
+            self.label = label
+            self.secrets = secrets
+        }
+    }
+
     let definition: PluginToolDef
-    let secrets: [String: String]
+    /// Never empty.
+    public let accounts: [Account]
     let session: URLSession
 
     public init(definition: PluginToolDef, secrets: [String: String] = [:], session: URLSession = .shared) {
+        self.init(definition: definition, accounts: [Account(id: "", label: "", secrets: secrets)], session: session)
+    }
+
+    public init(definition: PluginToolDef, accounts: [Account], session: URLSession = .shared) {
+        precondition(!accounts.isEmpty, "a plugin tool needs an account")
         self.definition = definition
-        self.secrets = secrets
+        self.accounts = accounts
         self.session = session
+    }
+
+    /// The same tool with only the accounts in `ids`; nil if none is left.
+    public func restricted(to ids: Set<String>) -> HTTPPluginTool? {
+        let kept = accounts.filter { ids.contains($0.id) }
+        return kept.isEmpty ? nil : HTTPPluginTool(definition: definition, accounts: kept, session: session)
+    }
+
+    /// The argument naming the account, when there is a choice: `account`,
+    /// unless the manifest already has one.
+    public var accountArgument: String? {
+        guard accounts.count > 1 else { return nil }
+        return Self.properties(of: definition.inputSchemaJSON)?["account"] == nil ? "account" : "tykaoz_account"
+    }
+
+    /// The label of the account a call acts with: the one it names when
+    /// there is a choice, else the only one's, if it has a name.
+    public func accountLabel(in arguments: Data) -> String? {
+        guard let argument = accountArgument else { return accounts[0].label.isEmpty ? nil : accounts[0].label }
+        return ((try? JSONSerialization.jsonObject(with: arguments)) as? [String: Any])?[argument] as? String
+    }
+
+    private static func properties(of schemaJSON: String) -> [String: Any]? {
+        ((try? JSONSerialization.jsonObject(with: Data(schemaJSON.utf8))) as? [String: Any])?["properties"] as? [String: Any]
     }
 
     private static let maxResponseChars = 100_000
@@ -27,12 +75,42 @@ public struct HTTPPluginTool: Tool {
         ToolSpec(
             name: definition.name,
             description: definition.description,
-            inputSchemaJSON: definition.inputSchemaJSON
+            inputSchemaJSON: schemaJSON
         )
     }
 
+    /// The manifest's schema, with the account to choose when there is a choice.
+    private var schemaJSON: String {
+        guard let argument = accountArgument,
+              var schema = (try? JSONSerialization.jsonObject(with: Data(definition.inputSchemaJSON.utf8))) as? [String: Any]
+        else { return definition.inputSchemaJSON }
+        var properties = schema["properties"] as? [String: Any] ?? [:]
+        properties[argument] = [
+            "type": "string",
+            "enum": accounts.map(\.label),
+            "description": "Which account to act with.",
+        ]
+        schema["properties"] = properties
+        schema["required"] = (schema["required"] as? [String] ?? []) + [argument]
+        guard let data = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else { return definition.inputSchemaJSON }
+        return text
+    }
+
     public func execute(arguments: Data) async throws -> String {
-        let request = try buildRequest(arguments: arguments)
+        var arguments = arguments
+        var secrets = accounts[0].secrets
+        if let argument = accountArgument {
+            var object = ((try? JSONSerialization.jsonObject(with: arguments)) as? [String: Any]) ?? [:]
+            let label = object.removeValue(forKey: argument) as? String
+            guard let account = accounts.first(where: { $0.label == label }) else {
+                let labels = accounts.map { "\"\($0.label)\"" }.joined(separator: ", ")
+                throw ToolError.execution(message: "\(argument) must be one of: \(labels)")
+            }
+            secrets = account.secrets
+            arguments = try JSONSerialization.data(withJSONObject: object)
+        }
+        let request = try buildRequest(arguments: arguments, secrets: secrets)
 
         let data: Data
         let response: URLResponse
@@ -56,9 +134,9 @@ public struct HTTPPluginTool: Tool {
             : body
     }
 
-    private func buildRequest(arguments: Data) throws -> URLRequest {
+    private func buildRequest(arguments: Data, secrets: [String: String]) throws -> URLRequest {
         let argDict = (try? JSONSerialization.jsonObject(with: arguments)) as? [String: Any] ?? [:]
-        let (resolvedURL, usedKeys) = try self.resolvedURL(arguments: argDict)
+        let (resolvedURL, usedKeys) = try self.resolvedURL(arguments: argDict, secrets: secrets)
 
         switch definition.method {
         case .post:
@@ -66,7 +144,7 @@ public struct HTTPPluginTool: Tool {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.httpBody = arguments.isEmpty ? Data("{}".utf8) : arguments
-            applyHeaders(&request)
+            applyHeaders(&request, secrets: secrets)
             request.timeoutInterval = 30
             return request
 
@@ -88,7 +166,7 @@ public struct HTTPPluginTool: Tool {
             }
             var request = URLRequest(url: url)
             request.httpMethod = "GET"
-            applyHeaders(&request)
+            applyHeaders(&request, secrets: secrets)
             request.timeoutInterval = 30
             return request
         }
@@ -96,7 +174,7 @@ public struct HTTPPluginTool: Tool {
 
     /// Substitutes secret then argument placeholders in the URL template and
     /// returns the resulting URL plus the argument names consumed by it.
-    private func resolvedURL(arguments: [String: Any]) throws -> (URL, Set<String>) {
+    private func resolvedURL(arguments: [String: Any], secrets: [String: String]) throws -> (URL, Set<String>) {
         let withSecrets = PluginSecrets.substitute(in: definition.urlTemplate, secrets: secrets)
         let (filled, usedKeys) = PluginArguments.substitute(in: withSecrets, arguments: arguments)
         guard let url = URL(string: filled) else {
@@ -105,7 +183,7 @@ public struct HTTPPluginTool: Tool {
         return (url, usedKeys)
     }
 
-    private func applyHeaders(_ request: inout URLRequest) {
+    private func applyHeaders(_ request: inout URLRequest, secrets: [String: String]) {
         for (key, value) in definition.headers {
             request.setValue(
                 PluginSecrets.substitute(in: value, secrets: secrets),
