@@ -47,6 +47,35 @@ enum HttpHost {
 
         let guardRedirects = obj["sameSiteRedirectsOnly"] as? Bool == true ? SameSiteRedirects() : nil
 
+        // Public addresses only: the whole answer is held until every
+        // connection made — each redirect's too — is known to have reached
+        // an internet address, then given or refused. A name that changes
+        // its answer after being checked lands here, and gives nothing.
+        if obj["publicAddressesOnly"] as? Bool == true {
+            let watch = PublicAddressesOnly(sameSite: guardRedirects != nil)
+            Task {
+                do {
+                    let (data, response) = try await session.data(for: request, delegate: watch)
+                    guard await watch.allPublic() else {
+                        complete(bridge, id, ok: false, jsonValue: "address of the local network refused")
+                        return
+                    }
+                    for line in String(decoding: data, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false) {
+                        emit(bridge, id, chunk: line + "\n")
+                    }
+                    let http = response as? HTTPURLResponse
+                    var headers: [String: String] = [:]
+                    for (key, value) in http?.allHeaderFields ?? [:] {
+                        if let k = key as? String, let v = value as? String { headers[k] = v }
+                    }
+                    complete(bridge, id, ok: true, jsonObject: ["status": http?.statusCode ?? 0, "headers": headers])
+                } catch {
+                    complete(bridge, id, ok: false, jsonValue: error.localizedDescription)
+                }
+            }
+            return
+        }
+
         Task {
             do {
                 let (bytes, response) = try await session.bytes(for: request, delegate: guardRedirects)
@@ -123,5 +152,48 @@ final class SameSiteRedirects: NSObject, URLSessionTaskDelegate, Sendable {
     static func site(of url: URL?) -> String? {
         guard let host = url?.host()?.lowercased() else { return nil }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+}
+
+/// Watches where a request's connections went: every transaction's remote
+/// address, once the task is done. Redirects stay within the site when asked.
+final class PublicAddressesOnly: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let sameSite: Bool
+    private let lock = NSLock()
+    private var addresses: [String]?
+    private var waiting: CheckedContinuation<[String], Never>?
+
+    init(sameSite: Bool) { self.sameSite = sameSite }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest) async -> URLRequest? {
+        guard sameSite else { return request }
+        return SameSiteRedirects.site(of: task.originalRequest?.url) == SameSiteRedirects.site(of: request.url) ? request : nil
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+        let found = metrics.transactionMetrics.map { $0.remoteAddress ?? "" }
+        lock.lock()
+        let continuation = waiting
+        waiting = nil
+        addresses = found
+        lock.unlock()
+        continuation?.resume(returning: found)
+    }
+
+    /// Whether every connection reached an internet address. A transaction
+    /// whose address is unknown counts as not.
+    func allPublic() async -> Bool {
+        let found: [String] = await withCheckedContinuation { continuation in
+            lock.lock()
+            if let addresses {
+                lock.unlock()
+                continuation.resume(returning: addresses)
+            } else {
+                waiting = continuation
+                lock.unlock()
+            }
+        }
+        return !found.isEmpty && found.allSatisfy { !$0.isEmpty && NetworkAddress.isPublic($0) }
     }
 }

@@ -49,7 +49,7 @@ export default {
     const res = await httpGet(url, {
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "User-Agent": "TyKaoz/0.1 (macOS; +https://tykaoz.bzh)",
-    }, { sameSite: true });
+    }, { sameSite: true, publicOnly: Boolean(args && args.public_only) });
     if (res.status >= 300 && res.status < 400 && res.location) {
       throw new Error("Redirected to another site: " + res.location
         + " — call fetch_url with that address if it is the page you need.");
