@@ -32,4 +32,25 @@ public enum NetworkAddress {
         if b[0] == 0x20, b[1] == 0x02 { return isPublic("\(b[2]).\(b[3]).\(b[4]).\(b[5])") }
         return true
     }
+
+    /// Every address `host` resolves to, as text.
+    public static func addresses(of host: String) -> [String] {
+        let name = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        var hints = addrinfo(ai_flags: 0, ai_family: AF_UNSPEC, ai_socktype: SOCK_STREAM, ai_protocol: 0,
+                             ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
+        var list: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(name, nil, &hints, &list) == 0, let first = list else { return [] }
+        defer { freeaddrinfo(list) }
+        var out: [String] = []
+        var cursor: UnsafeMutablePointer<addrinfo>? = first
+        while let entry = cursor {
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            if getnameinfo(entry.pointee.ai_addr, entry.pointee.ai_addrlen, &buffer, socklen_t(buffer.count),
+                           nil, 0, NI_NUMERICHOST) == 0 {
+                out.append(String(cString: buffer))
+            }
+            cursor = entry.pointee.ai_next
+        }
+        return out
+    }
 }

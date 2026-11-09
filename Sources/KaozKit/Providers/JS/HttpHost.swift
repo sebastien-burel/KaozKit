@@ -70,7 +70,9 @@ enum HttpHost {
                     }
                     complete(bridge, id, ok: true, jsonObject: ["status": http?.statusCode ?? 0, "headers": headers])
                 } catch {
-                    complete(bridge, id, ok: false, jsonValue: error.localizedDescription)
+                    // Said the same whatever failed: a refused port and a
+                    // silent one must not tell apart what lives on the network.
+                    complete(bridge, id, ok: false, jsonValue: "the page could not be read")
                 }
             }
             return
@@ -167,8 +169,13 @@ final class PublicAddressesOnly: NSObject, URLSessionTaskDelegate, @unchecked Se
 
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest) async -> URLRequest? {
-        guard sameSite else { return request }
-        return SameSiteRedirects.site(of: task.originalRequest?.url) == SameSiteRedirects.site(of: request.url) ? request : nil
+        if sameSite, SameSiteRedirects.site(of: task.originalRequest?.url) != SameSiteRedirects.site(of: request.url) {
+            return nil
+        }
+        // A hop is followed only to a name that leads out.
+        guard let host = request.url?.host() else { return nil }
+        let addresses = NetworkAddress.addresses(of: host)
+        return !addresses.isEmpty && addresses.allSatisfy(NetworkAddress.isPublic) ? request : nil
     }
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
