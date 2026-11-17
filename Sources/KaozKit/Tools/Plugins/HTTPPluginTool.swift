@@ -71,6 +71,9 @@ public struct HTTPPluginTool: Tool {
     /// the user's own data, from their account.
     public var usesSecrets: Bool { !definition.secretNames.isEmpty }
 
+    /// Whether it only reads (`PluginToolDef.readsOnly`).
+    public var readsOnly: Bool { definition.readsOnly }
+
     public var spec: ToolSpec {
         ToolSpec(
             name: definition.name,
@@ -123,11 +126,12 @@ public struct HTTPPluginTool: Tool {
         guard let http = response as? HTTPURLResponse else {
             throw ToolError.execution(message: "non-HTTP response")
         }
-        let body = String(data: data, encoding: .utf8) ?? ""
+        var body = String(data: data, encoding: .utf8) ?? ""
         guard (200..<300).contains(http.statusCode) else {
             let snippet = body.prefix(500)
             throw ToolError.execution(message: "HTTP \(http.statusCode)\(snippet.isEmpty ? "" : " : \(snippet)")")
         }
+        if let keep = definition.keep, let kept = PluginResponse.keeping(keep, of: data) { body = kept }
 
         return body.count > Self.maxResponseChars
             ? String(body.prefix(Self.maxResponseChars)) + "\n[truncated]"

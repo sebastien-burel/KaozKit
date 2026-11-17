@@ -32,6 +32,15 @@ public struct PluginToolDef: Equatable, Sendable {
     let urlTemplate: String
     let method: Method
     let headers: [String: String]
+    /// A POST the manifest marks `read_only`: a search sent as a body.
+    var markedReadOnly = false
+    /// The parts of a JSON answer worth the model's tokens, as dotted paths
+    /// (`web.results.title`; an array is gone through). Nil keeps it whole.
+    var keep: [String]? = nil
+
+    /// Whether it only reads: every GET, and a POST marked `read_only`.
+    /// Anything else may change data, and the app asks first.
+    public var readsOnly: Bool { method == .get || markedReadOnly }
 
     /// The server the tool calls, for the user to see where their arguments
     /// go. Nil when the host itself is a placeholder.
@@ -133,5 +142,7 @@ extension PluginToolDef {
         self.urlTemplate = urlString
         self.method = method
         self.headers = headers
+        self.markedReadOnly = dict["read_only"] as? Bool == true
+        self.keep = (dict["keep"] as? [String]).flatMap { $0.isEmpty ? nil : $0 }
     }
 }
