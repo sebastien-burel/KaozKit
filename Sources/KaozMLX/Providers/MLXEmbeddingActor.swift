@@ -89,12 +89,10 @@ public actor MLXEmbeddingActor {
         let loaded = try await EmbedderModelFactory.shared.loadContainer(
             from: downloader,
             using: tokenizerLoader,
+            // No progress reported at load time: the download above
+            // already did, and the load itself maps the safetensors.
             configuration: ModelConfiguration(directory: snapshot)
-        ) { _ in
-            // No progress reporting needed at load-time — the
-            // download (above) already reported, and the actual
-            // load is fast (memory mapping the safetensors).
-        }
+        )
         container = loaded
         // Bump the mtime so the LRU eviction pass on next launch
         // treats this model as "recently used".

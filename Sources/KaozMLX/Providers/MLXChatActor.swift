@@ -186,6 +186,14 @@ public actor MLXChatActor {
                     // call: Gemma 4's, the Onyx models' (Muse Glimmer), and
                     // Mistral's ([TOOL_CALLS]…[ARGS], then [TOOL_RESULTS]).
                     let format = await container.configuration.toolCallFormat
+                    // Since mlx-swift-lm 3.33 the library routes the thought
+                    // itself, as `.reasoning` without its delimiters, for a
+                    // model with a reasoning protocol (`<think>` families,
+                    // Gemma 4's channels) and for the framed protocols
+                    // (Harmony, Onyx). Ours only runs for the others —
+                    // Apertus, and gpt-oss when not read as Harmony.
+                    let libraryReasons = await container.configuration.reasoningConfig != nil
+                    let parsesHarmony = isHarmony && format != .gptOSS
                     let structuredToolHistory = isGemma4 || format == .atem || format == .mistral
                     let mappedTools = tools.isEmpty ? nil : tools.compactMap(Self.mapTool)
                     let context = reasoningEffortContext(reasoningEffort)
@@ -320,6 +328,12 @@ public actor MLXChatActor {
                     // `generate` drops it, and nothing then says when the
                     // cache is free again.
                     let (stream, decoding) = try await container.perform(nonSendable: feed) { context, feed in
+                        // Read off the whole prompt, not the part the cache
+                        // left to feed: a primed model never writes `<think>`.
+                        let primed = context.configuration.reasoningConfig.map {
+                            ReasoningEventEmitter.promptEndsInsideReasoning(
+                                promptTokens: promptTokens, config: $0, tokenizer: context.tokenizer)
+                        } ?? false
                         let iterator = try TokenIterator(
                             input: feed.input, model: context.model, cache: box.cache,
                             state: feed.state, parameters: feedParams,
@@ -333,7 +347,8 @@ public actor MLXChatActor {
                             iterator: iterator,
                             tools: Self.decoderTools(
                                 mappedTools, format: context.configuration.toolCallFormat),
-                            toolCallPolicy: feedParams.toolCallPolicy)
+                            toolCallPolicy: feedParams.toolCallPolicy,
+                            reasoningPrimedInside: primed)
                     }
                     generation = decoding
                     // Stateful intercept layer for Gemma 4. MLX's
@@ -359,7 +374,7 @@ public actor MLXChatActor {
                     // parser inside the reasoning block, or the whole chain
                     // of thought lands in the answer with a stray
                     // `</think>` at the end of it.
-                    if !isHarmony, !needsGemma4,
+                    if !libraryReasons, !isHarmony, !needsGemma4,
                        let think = blocks.first,
                        await Self.promptOpensReasoning(lmInput, container: container) {
                         streamState.block = think
@@ -372,7 +387,7 @@ public actor MLXChatActor {
                         switch event {
                         case .chunk(let text):
                             if firstChunkAt == nil { firstChunkAt = .now }
-                            if isHarmony {
+                            if parsesHarmony {
                                 harmony.consume(text, into: continuation)
                             } else {
                                 Self.processStreamChunk(
@@ -382,6 +397,12 @@ public actor MLXChatActor {
                                     continuation: continuation
                                 )
                             }
+                        case .reasoning(let text):
+                            if firstChunkAt == nil { firstChunkAt = .now }
+                            if !text.isEmpty { continuation.yield(.reasoningDelta(text)) }
+                        case .steering:
+                            // Only a ChatSession steers; this stream never does.
+                            break
                         case .toolCall(let call):
                             // MLX `ToolCall` has no id; synthesise
                             // one so TyKaoz's ChatSession can route
@@ -416,7 +437,7 @@ public actor MLXChatActor {
                             break
                         }
                     }
-                    if isHarmony {
+                    if parsesHarmony {
                         harmony.finish(into: continuation)
                     } else {
                         Self.flushStreamState(&streamState, continuation: continuation)
@@ -791,13 +812,13 @@ public actor MLXChatActor {
                     from: downloader,
                     using: tokenizerLoader,
                     configuration: config
-                ) { _ in }
+                )
             } else {
                 loaded = try await LLMModelFactory.shared.loadContainer(
                     from: downloader,
                     using: tokenizerLoader,
                     configuration: config
-                ) { _ in }
+                )
             }
         } catch let error as ModelFactoryError {
             // "Unsupported model type: x" reads like the model is broken.

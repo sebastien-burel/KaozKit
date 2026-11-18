@@ -64,20 +64,12 @@ let package = Package(
         // package's build, so a drift here mismatches the Metal kernels. Bumping
         // this means bumping the app and re-running that script, in that order.
         //
-        // 0.32.3 is what mlx-swift-lm 3.32.3 requires (#657, an SDK issue).
-        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.32.3"),
-        // mlx-swift-lm 3.32.3, from a fork: the release plus one commit that
-        // drops the MTP head from converted Qwen 3.5 VLM checkpoints that keep
-        // it (ThinkingCap-Qwen3.8), which otherwise fail to load on unhandled
-        // `mtp` keys. The fix is proposed upstream (ml-explore/mlx-swift-lm#642,
-        // branch fix/qwen35-vlm-mtp-in-mlx-checkpoints); once merged, return to
-        // ml-explore at the first release that carries it — and the app with
-        // it, which must name the same URL. The fork's branch is
-        // kaozkit/3.32.3. A revision, never `branch:` — a branch would move the
-        // build under us.
-        .package(
-            url: "https://github.com/sebastien-burel/mlx-swift-lm",
-            revision: "23c27becef69ed939f22d407bff175cd310c29ee"),
+        // 0.33.0 is what mlx-swift-lm 3.33.0 picks up.
+        .package(url: "https://github.com/ml-explore/mlx-swift", exact: "0.33.0"),
+        // mlx-swift-lm from ml-explore again: 3.33.0 carries the MTP-head fix
+        // (#642) the fork was kept for. Exact, and the app names the same URL
+        // and version, or SPM sees two identities.
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", exact: "3.33.0"),
         .package(url: "https://github.com/huggingface/swift-huggingface", from: "0.9.0"),
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.3"),
     ],
