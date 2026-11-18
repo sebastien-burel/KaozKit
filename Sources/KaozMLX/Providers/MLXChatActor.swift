@@ -195,7 +195,7 @@ public actor MLXChatActor {
                     let libraryReasons = await container.configuration.reasoningConfig != nil
                     let parsesHarmony = isHarmony && format != .gptOSS
                     let structuredToolHistory = isGemma4 || format == .atem || format == .mistral
-                    let mappedTools = tools.isEmpty ? nil : tools.compactMap(Self.mapTool)
+                    let mappedTools = tools.isEmpty ? nil : tools.compactMap { Self.mapTool($0, forGemma4: isGemma4) }
                     let context = reasoningEffortContext(reasoningEffort)
                     let userInput: UserInput
                     if isHarmony {
@@ -1721,6 +1721,10 @@ public actor MLXChatActor {
         mapMessages(messages).map(\.images.count)
     }
 
+    static public func mapToolForTests(_ spec: KaozKit.ToolSpec, forGemma4: Bool) -> [String: any Sendable]? {
+        mapTool(spec, forGemma4: forGemma4)
+    }
+
     /// Test-only re-export so unit tests can hit the parser
     /// without going through the full streaming loop.
     static public func parseGemma4PayloadForTests(_ payload: String) -> (name: String, argumentsJSON: String)? {
@@ -1979,11 +1983,19 @@ public actor MLXChatActor {
     /// Returns `nil` if the input JSON schema can't be parsed —
     /// those tools just don't get advertised to the model, rather
     /// than failing the whole turn.
-    private static func mapTool(_ spec: KaozKit.ToolSpec) -> MLXLMCommon.ToolSpec? {
+    private static func mapTool(_ spec: KaozKit.ToolSpec, forGemma4: Bool = false) -> MLXLMCommon.ToolSpec? {
         guard let data = spec.inputSchemaJSON.data(using: .utf8),
               let parsed = try? JSONSerialization.jsonObject(with: data),
-              let schema = parsed as? [String: Any]
+              let raw = parsed as? [String: Any]
         else { return nil }
+        // A `null` in the schema (`"default": null`, `"enum": [..., null]`)
+        // comes out of JSONSerialization as NSNull, which Jinja refuses
+        // at some depths: the whole prompt failed to render. The nulls go,
+        // as in tool-call arguments.
+        var schema = raw.compactMapValues(sendableJSONValue)
+        if forGemma4, let properties = schema["properties"] as? [String: any Sendable] {
+            schema["properties"] = gemma4Properties(properties)
+        }
         return [
             "type": "function",
             "function": [
@@ -1992,5 +2004,40 @@ public actor MLXChatActor {
                 "parameters": schema,
             ] as [String: any Sendable],
         ]
+    }
+
+    /// Gemma 4's template reads each property's `type` as one string
+    /// (`value['type'] | upper`) and says "may be null" with `nullable`,
+    /// Google's way. A JSON Schema type list (`["string", "null"]`) or a
+    /// property typed by `anyOf` failed the whole render ("upper filter
+    /// requires string"). Each such property keeps its first non-null type,
+    /// with that branch's keys, and `nullable` when null was allowed.
+    private static func gemma4Properties(_ properties: [String: any Sendable]) -> [String: any Sendable] {
+        properties.mapValues { value in
+            guard var property = value as? [String: any Sendable] else { return value }
+            if !(property["type"] is String) {
+                let branches = ((property["anyOf"] ?? property["oneOf"]) as? [any Sendable] ?? [])
+                    .compactMap { $0 as? [String: any Sendable] }
+                let types = (property["type"] as? [any Sendable])?.compactMap { $0 as? String }
+                    ?? branches.compactMap { $0["type"] as? String }
+                let chosen = types.first { $0 != "null" } ?? "string"
+                if let branch = branches.first(where: { $0["type"] as? String == chosen }) {
+                    property.merge(branch) { current, _ in current }
+                }
+                property["anyOf"] = nil
+                property["oneOf"] = nil
+                property["type"] = chosen
+                if types.contains("null") { property["nullable"] = true }
+            }
+            if let nested = property["properties"] as? [String: any Sendable] {
+                property["properties"] = gemma4Properties(nested)
+            }
+            if var items = property["items"] as? [String: any Sendable],
+               let nested = items["properties"] as? [String: any Sendable] {
+                items["properties"] = gemma4Properties(nested)
+                property["items"] = items
+            }
+            return property
+        }
     }
 }
