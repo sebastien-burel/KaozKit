@@ -116,7 +116,7 @@ extension PluginToolDef {
             throw PluginError.missingField("tools[].description")
         }
         guard let schema = dict["input_schema"] as? [String: Any],
-              let schemaData = try? JSONSerialization.data(withJSONObject: schema),
+              let schemaData = try? JSONSerialization.data(withJSONObject: schema, options: [.sortedKeys]),
               let schemaJSON = String(data: schemaData, encoding: .utf8) else {
             throw PluginError.missingField("tools[].input_schema")
         }
