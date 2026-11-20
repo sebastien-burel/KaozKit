@@ -98,8 +98,7 @@ public struct OpenAICompatibleClient: Sendable {
                 throw OpenAICompatibleError.network(message: "non-HTTP response")
             }
             if (http.statusCode == 429 || http.statusCode >= 500), attempt < 3 {
-                let asked = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
-                try await Task.sleep(for: .seconds(min(asked ?? Double(attempt * 2), 30)))
+                try await Task.sleep(for: Self.retryWait(http, attempt: attempt))
                 continue
             }
             guard (200..<300).contains(http.statusCode) else {
@@ -112,6 +111,15 @@ public struct OpenAICompatibleClient: Sendable {
             }
             return try Self.decodeEmbeddings(data)
         }
+    }
+
+    /// The wait the server asks for (`Retry-After`, in seconds), at most
+    /// 30 s, or a growing one. A value that is not a finite, non-negative
+    /// number — `nan` parses as a Double — is ignored: it would trap.
+    static func retryWait(_ http: HTTPURLResponse, attempt: Int) -> Duration {
+        let asked = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+            .flatMap { $0.isFinite && $0 >= 0 ? $0 : nil }
+        return .seconds(min(asked ?? Double(attempt * 2), 30))
     }
 
     static func embeddingBody(model: String, inputs: [String], dimensions: Int?) throws -> Data {
@@ -269,8 +277,7 @@ public struct OpenAICompatibleClient: Sendable {
                         }
                         http = answer
                         guard http.statusCode == 429 || http.statusCode >= 500, attempt < 3 else { break }
-                        let asked = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
-                        try await Task.sleep(for: .seconds(min(asked ?? Double(attempt * 2), 30)))
+                        try await Task.sleep(for: Self.retryWait(http, attempt: attempt))
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         // Read the body so the user sees what the provider
