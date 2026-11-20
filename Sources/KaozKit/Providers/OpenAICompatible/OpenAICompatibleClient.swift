@@ -250,15 +250,27 @@ public struct OpenAICompatibleClient: Sendable {
                     let clock = ContinuousClock()
                     let requestStart = clock.now
 
-                    let (bytes, response): (URLSession.AsyncBytes, URLResponse)
-                    do {
-                        (bytes, response) = try await session.bytes(for: request)
-                    } catch let urlError as URLError {
-                        throw OpenAICompatibleError.network(message: urlError.localizedDescription)
-                    }
-
-                    guard let http = response as? HTTPURLResponse else {
-                        throw OpenAICompatibleError.network(message: "non-HTTP response")
+                    // A 429 or a 5xx comes before any token: tried again,
+                    // twice, as `embed` does. A saturated server (Munito's
+                    // `capacity_exceeded`) failed whole wiki ingestions.
+                    var bytes: URLSession.AsyncBytes
+                    var http: HTTPURLResponse
+                    var attempt = 0
+                    while true {
+                        attempt += 1
+                        let response: URLResponse
+                        do {
+                            (bytes, response) = try await session.bytes(for: request)
+                        } catch let urlError as URLError {
+                            throw OpenAICompatibleError.network(message: urlError.localizedDescription)
+                        }
+                        guard let answer = response as? HTTPURLResponse else {
+                            throw OpenAICompatibleError.network(message: "non-HTTP response")
+                        }
+                        http = answer
+                        guard http.statusCode == 429 || http.statusCode >= 500, attempt < 3 else { break }
+                        let asked = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+                        try await Task.sleep(for: .seconds(min(asked ?? Double(attempt * 2), 30)))
                     }
                     guard (200..<300).contains(http.statusCode) else {
                         // Read the body so the user sees what the provider
