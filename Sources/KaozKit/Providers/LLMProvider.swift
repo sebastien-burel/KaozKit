@@ -15,6 +15,24 @@ public protocol LLMProvider: Sendable {
         messages: [ChatMessage],
         tools: [ToolSpec]
     ) -> AsyncThrowingStream<StreamEvent, Error>
+
+    /// The same round, sampled at `temperature` (nil: the provider's own
+    /// default). A provider that doesn't take one answers at its default.
+    func chat(
+        messages: [ChatMessage],
+        tools: [ToolSpec],
+        temperature: Double?
+    ) -> AsyncThrowingStream<StreamEvent, Error>
+}
+
+extension LLMProvider {
+    public func chat(
+        messages: [ChatMessage],
+        tools: [ToolSpec],
+        temperature: Double?
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        chat(messages: messages, tools: tools)
+    }
 }
 
 public enum ProviderAvailability: Equatable {

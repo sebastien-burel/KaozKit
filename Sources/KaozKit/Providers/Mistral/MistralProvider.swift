@@ -40,7 +40,13 @@ public struct MistralProvider: LLMProvider {
     }
 
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
-        client.chat(model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort)
+        chat(messages: messages, tools: tools, temperature: nil)
+    }
+
+    public func chat(
+        messages: [ChatMessage], tools: [ToolSpec], temperature: Double?
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        client.chat(model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort, temperature: temperature)
     }
 
     /// The efforts a Mistral model accepts, for one its `/v1/models` marks as

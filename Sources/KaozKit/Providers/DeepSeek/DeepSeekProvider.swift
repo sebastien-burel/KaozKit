@@ -35,6 +35,12 @@ public struct DeepSeekProvider: LLMProvider {
     }
 
     public func chat(messages: [ChatMessage], tools: [ToolSpec]) -> AsyncThrowingStream<StreamEvent, Error> {
-        client.chat(model: model, messages: messages, tools: tools)
+        chat(messages: messages, tools: tools, temperature: nil)
+    }
+
+    public func chat(
+        messages: [ChatMessage], tools: [ToolSpec], temperature: Double?
+    ) -> AsyncThrowingStream<StreamEvent, Error> {
+        client.chat(model: model, messages: messages, tools: tools, temperature: temperature)
     }
 }

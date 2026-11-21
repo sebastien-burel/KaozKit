@@ -200,7 +200,8 @@ public struct OpenAICompatibleClient: Sendable {
         model: String,
         messages: [ChatMessage],
         tools: [ToolSpec],
-        reasoningEffort: String? = nil
+        reasoningEffort: String? = nil,
+        temperature: Double? = nil
     ) -> AsyncThrowingStream<StreamEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -247,7 +248,7 @@ public struct OpenAICompatibleClient: Sendable {
                     request.timeoutInterval = 60
                     request.httpBody = try Self.buildBody(
                         model: model, messages: messages, tools: tools, reasoningEffort: reasoningEffort,
-                        reasoningAsBlocks: reasoningAsBlocks)
+                        reasoningAsBlocks: reasoningAsBlocks, temperature: temperature)
 
                     // Client-side timing for the benchmark metrics. The
                     // server reports token counts but no durations, so we
@@ -789,7 +790,8 @@ public struct OpenAICompatibleClient: Sendable {
         messages: [ChatMessage],
         tools: [ToolSpec],
         reasoningEffort: String? = nil,
-        reasoningAsBlocks: Bool = false
+        reasoningAsBlocks: Bool = false,
+        temperature: Double? = nil
     ) throws -> Data {
         var dict: [String: Any] = [
             "model": model,
@@ -802,6 +804,9 @@ public struct OpenAICompatibleClient: Sendable {
         ]
         if let reasoningEffort {
             dict["reasoning_effort"] = reasoningEffort
+        }
+        if let temperature {
+            dict["temperature"] = temperature
         }
         if !tools.isEmpty {
             dict["tools"] = try tools.map { spec -> [String: Any] in
